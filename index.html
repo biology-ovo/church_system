@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="브라우저에서 바로 사용하는 간단한 교회 물품 관리">
+  <title>교회 물품 관리</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#" aria-label="물품 목록 맨 위로">
+        <span class="brand-mark" aria-hidden="true">+</span>
+        <span><strong>교회 물품 관리</strong><small>우리 교회의 소중한 물품을 한눈에</small></span>
+      </a>
+      <button class="primary-button header-add" id="openFormButton" type="button"><span aria-hidden="true">＋</span> 물품 등록</button>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero" aria-labelledby="pageTitle">
+      <div>
+        <p class="eyebrow">CHURCH INVENTORY</p>
+        <h1 id="pageTitle">물품을 쉽고 간편하게<br><em>관리하세요.</em></h1>
+        <p class="hero-copy">별도의 설치나 로그인 없이, 이 브라우저에 안전하게 기록됩니다.</p>
+      </div>
+      <div class="summary-card" aria-label="물품 요약">
+        <div><span>등록 물품</span><strong id="totalKinds">0<small>종</small></strong></div>
+        <div><span>전체 수량</span><strong id="totalQuantity">0<small>개</small></strong></div>
+        <div><span>점검 필요</span><strong class="attention" id="attentionCount">0<small>종</small></strong></div>
+      </div>
+    </section>
+
+    <section class="inventory-section" aria-labelledby="listTitle">
+      <div class="section-heading">
+        <div><p class="eyebrow">INVENTORY</p><h2 id="listTitle">물품 목록</h2></div>
+        <p id="resultCount" aria-live="polite">총 0개의 물품</p>
+      </div>
+
+      <div class="filter-panel">
+        <label class="search-box">
+          <span class="sr-only">물품 검색</span><span aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" placeholder="물품명, 제조사, 모델명, 위치 검색">
+        </label>
+        <label><span class="sr-only">카테고리 선택</span><select id="categoryFilter"><option value="">모든 카테고리</option></select></label>
+        <label><span class="sr-only">상태 선택</span><select id="statusFilter"><option value="">모든 상태</option></select></label>
+      </div>
+
+      <div class="category-tabs" id="categoryTabs" aria-label="카테고리 빠른 선택"></div>
+      <div class="item-grid" id="itemGrid"></div>
+      <div class="empty-state" id="emptyState" hidden>
+        <div aria-hidden="true">⌕</div><h3>조건에 맞는 물품이 없어요</h3><p>검색어나 필터를 바꾸거나 새 물품을 등록해 보세요.</p>
+        <button type="button" class="secondary-button" id="clearFiltersButton">필터 초기화</button>
+      </div>
+    </section>
+  </main>
+
+  <button class="floating-add" id="mobileOpenFormButton" type="button" aria-label="새 물품 등록">＋</button>
+
+  <div class="modal" id="itemModal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+      <div class="modal-header">
+        <div><p class="eyebrow">ITEM FORM</p><h2 id="formTitle">새 물품 등록</h2></div>
+        <button class="icon-button" type="button" data-close-modal aria-label="닫기">×</button>
+      </div>
+      <form id="itemForm">
+        <input type="hidden" id="itemId">
+        <div class="form-grid">
+          <label class="field full"><span>물품 사진 <small>선택</small></span><input id="photo" type="file" accept="image/jpeg,image/png,image/webp"><span class="help">사진은 저장 공간을 아끼도록 자동으로 작게 변환됩니다.</span></label>
+          <div class="photo-preview full" id="photoPreview" hidden><img alt="선택한 물품 사진 미리보기"><button type="button" id="removePhotoButton">사진 지우기</button></div>
+          <label class="field full"><span>물품명 <b>*</b></span><input id="name" required maxlength="60" placeholder="예: 무선 마이크"></label>
+          <label class="field"><span>카테고리 <b>*</b></span><select id="category" required></select></label>
+          <label class="field"><span>상태 <b>*</b></span><select id="status" required></select></label>
+          <label class="field"><span>수량 <b>*</b></span><input id="quantity" type="number" min="0" step="1" value="1" required></label>
+          <label class="field"><span>보관 위치 <b>*</b></span><input id="location" required maxlength="60" placeholder="예: 본당 음향실" list="locationSuggestions"></label>
+          <datalist id="locationSuggestions"></datalist>
+          <label class="field"><span>제조사</span><input id="manufacturer" maxlength="60" placeholder="예: Shure"></label>
+          <label class="field"><span>모델명</span><input id="modelName" maxlength="60" placeholder="예: BLX24R"></label>
+          <label class="field"><span>시리얼번호</span><input id="serialNumber" maxlength="80" placeholder="제품 고유 번호"></label>
+          <label class="field"><span>구입일</span><input id="purchaseDate" type="date"></label>
+          <label class="field"><span>구입 가격</span><input id="purchasePrice" type="number" min="0" step="1" placeholder="원 단위"></label>
+          <label class="field full"><span>메모</span><textarea id="memo" rows="4" maxlength="500" placeholder="사용 용도나 특이사항을 적어주세요."></textarea></label>
+        </div>
+        <div class="form-actions"><button class="secondary-button" type="button" data-close-modal>취소</button><button class="primary-button" type="submit" id="saveButton">물품 저장</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="script.js"></script>
+</body>
+</html>
