@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>교회 부서 관리</title>
+  <style>
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; background: #f4f6fa; color: #243047; font-family: system-ui, sans-serif; }
+    main { max-width: 880px; margin: 64px auto; padding: 0 24px; }
+    .eyebrow { color: #536bd3; font-size: 13px; font-weight: 700; letter-spacing: .12em; }
+    h1 { margin: 12px 0; font-size: clamp(28px, 5vw, 38px); }
+    .intro { color: #657086; line-height: 1.7; }
+    form { margin-top: 32px; padding: 28px; background: white; border: 1px solid #e1e6ef; border-radius: 20px; }
+    fieldset { padding: 0; margin: 0; border: 0; }
+    legend { margin-bottom: 20px; font-size: 20px; font-weight: 700; }
+    .departments { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .department-card { overflow: hidden; border: 1px solid #dce2ec; border-radius: 12px; }
+    .department-card label { border: 0; border-radius: 0; }
+    .schedule-link { display: block; width: 100%; margin: 0; padding: 12px 20px; border-top: 1px solid #dce2ec; border-radius: 0; background: #f7f8fc; color: #374fac; text-align: left; }
+    .schedule-link:hover, .schedule-link[aria-expanded="true"] { background: #e5eaff; }
+    .schedule-panel { margin-top: 24px; padding: 28px; border: 1px solid #e1e6ef; border-radius: 20px; background: white; }
+    .schedule-panel h2 { margin-top: 0; }
+    .schedule-panel p { color: #657086; }
+    label { display: flex; align-items: center; gap: 12px; min-height: 88px; padding: 20px; border: 1px solid #dce2ec; border-radius: 12px; font-weight: 600; cursor: pointer; }
+    label:has(input:checked) { background: #eef2ff; border-color: #536bd3; color: #374fac; }
+    label:has(input:focus-visible) { outline: 3px solid #a8b5f5; outline-offset: 3px; }
+    input { width: 18px; height: 18px; margin: 0; accent-color: #536bd3; }
+    button { margin-top: 24px; padding: 13px 24px; background: #465ec4; border: 0; border-radius: 9px; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { background: #354ba9; }
+    button:focus-visible { outline: 3px solid #a8b5f5; outline-offset: 3px; }
+    .calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 16px; }
+    .calendar-toolbar h3 { margin: 0; font-size: 20px; }
+    .calendar-toolbar button { width: auto; margin: 0; padding: 10px 14px; }
+    .weekdays, .calendar-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+    .weekdays span { padding: 8px 0; text-align: center; color: #657086; font-size: 14px; }
+    .weekdays span:first-child { color: #c44c62; }
+    .calendar-days button { width: 100%; min-height: 56px; margin: 0; padding: 8px 2px; background: #f4f6fa; color: #243047; border: 1px solid transparent; }
+    .calendar-days button:hover { background: #e5eaff; }
+    .calendar-days button[aria-current="date"] { border-color: #536bd3; }
+    .calendar-days button[aria-pressed="true"] { background: #465ec4; color: white; }
+    .date-items { margin-top: 24px; padding: 20px; background: #f7f8fc; border-radius: 12px; }
+    .date-items h3 { margin-top: 0; line-height: 1.6; }
+    .date-items p { margin-bottom: 0; line-height: 1.7; }
+    .schedule-fields { display: grid; gap: 10px; }
+    .schedule-field { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; min-height: 0; padding: 0; border: 0; cursor: default; }
+    .schedule-field input { width: 100%; min-width: 0; height: 44px; padding: 10px 12px; border: 1px solid #dce2ec; border-radius: 8px; background: white; color: #243047; font: inherit; }
+    .schedule-field input:focus-visible { outline: 2px solid #536bd3; outline-offset: 2px; }
+    .date-items .save-status { font-size: 13px; }
+    .auth-panel { margin-top: 24px; padding: 20px; border: 1px solid #e1e6ef; border-radius: 12px; background: white; }
+    .auth-panel form { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 0; padding: 0; border: 0; }
+    .auth-panel label { display: grid; gap: 6px; min-height: 0; padding: 0; border: 0; flex: 1 1 180px; }
+    .auth-panel input { width: 100%; height: 42px; padding: 10px; border: 1px solid #dce2ec; border-radius: 8px; font: inherit; }
+    .auth-panel button { margin: 0; }
+    .auth-tabs { display: flex; gap: 8px; margin-top: 16px; }
+    .auth-tabs button { flex: 1; background: #eef2ff; color: #374fac; }
+    .auth-tabs button[aria-selected="true"] { background: #465ec4; color: white; }
+    .auth-help { font-size: 13px; color: #657086; line-height: 1.7; }
+    .field-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+    .field-row button { width: auto; margin: 0; padding: 10px 12px; font-size: 13px; }
+    .field-meta { grid-column: 1 / -1; color: #657086; font-size: 12px; }
+    button:disabled { cursor: not-allowed; opacity: .5; }
+    input:disabled { background: #e9edf3; color: #657086; }
+    #refreshSchedule { width: auto; margin: 0 0 16px; font-size: 13px; }
+    #addEvent { width: auto; margin: 0 8px 16px 0; }
+    .event-list { display: grid; gap: 10px; margin-bottom: 20px; }
+    .event-list button { width: 100%; margin: 0; text-align: left; background: white; color: #374fac; border: 1px solid #dce2ec; overflow-wrap: anywhere; }
+    .event-list button[aria-pressed="true"] { background: #e5eaff; border-color: #536bd3; }
+    .event-title-form { display: flex; flex-wrap: wrap; gap: 10px; padding: 0; margin: 0 0 20px; border: 0; background: transparent; }
+    .event-title-form label { display: grid; gap: 8px; flex: 1 1 200px; padding: 0; min-height: 0; border: 0; cursor: default; }
+    .event-title-form input { width: 100%; height: 44px; padding: 10px; border: 1px solid #dce2ec; border-radius: 8px; font: inherit; }
+    .event-title-form button { width: auto; margin: 0; align-self: end; }
+    @media (max-width: 600px) { main { margin-top: 32px; padding: 0 16px; } form { padding: 20px; } .departments { grid-template-columns: 1fr; } label { min-height: 64px; } button { width: 100%; } }
+    @media (max-width: 600px) { .schedule-panel { padding: 16px; } .calendar-days button { min-height: 44px; } .calendar-toolbar h3 { font-size: 18px; } }
+    @media (max-width: 600px) { .field-row { grid-template-columns: 1fr auto auto; } .schedule-field { grid-template-columns: 64px minmax(0, 1fr); gap: 8px; } .field-row button { padding: 10px 8px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">교회 부서 안내</p>
+    <h1>교회 부서 관리</h1>
+    <p class="intro">관리할 부서를 선택하세요.</p>
+    <section class="auth-panel" aria-label="로그인">
+      <p id="accountStatus" role="status">로그인 상태 확인 중…</p>
+      <form id="loginForm" role="tabpanel" aria-labelledby="loginTab" novalidate>
+        <label>아이디<input id="username" autocomplete="username" required maxlength="60"></label>
+        <label>비밀번호<input id="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+        <button type="submit">로그인</button>
+      </form>
+      <form id="signupForm" role="tabpanel" aria-labelledby="signupTab" novalidate hidden>
+        <label>아이디<input id="signupUsername" autocomplete="username" required maxlength="60"></label>
+        <label>비밀번호<input id="signupPassword" type="password" autocomplete="new-password" required maxlength="256"></label>
+        <label>비밀번호 확인<input id="signupPasswordConfirm" type="password" autocomplete="new-password" required maxlength="256"></label>
+        <button type="submit">가입하기</button>
+      </form>
+      <div class="auth-tabs" id="authTabs" role="tablist" aria-label="계정 메뉴">
+        <button id="loginTab" type="button" role="tab" aria-selected="true" aria-controls="loginForm">로그인</button>
+        <button id="signupTab" type="button" role="tab" aria-selected="false" aria-controls="signupForm" tabindex="-1">회원가입</button>
+      </div>
+      <button id="logoutButton" type="button" hidden>로그아웃</button>
+      <p id="authHelp" class="auth-help"></p>
+      <p id="authMessage" role="status"></p>
+    </section>
+    <form id="departmentForm">
+      <fieldset>
+        <legend>부서 선택</legend>
+        <div class="departments">
+          <div class="department-card"><label><input type="radio" name="department" value="예배부" required>예배부</label><button class="schedule-link" type="button" data-department="예배부" aria-label="예배부 일정관리" aria-controls="schedulePanel" aria-expanded="false">↳ 일정관리</button></div>
+          <div class="department-card"><label><input type="radio" name="department" value="방송부" required>방송부</label><button class="schedule-link" type="button" data-department="방송부" aria-label="방송부 일정관리" aria-controls="schedulePanel" aria-expanded="false">↳ 일정관리</button></div>
+          <div class="department-card"><label><input type="radio" name="department" value="아동부" required>아동부</label><button class="schedule-link" type="button" data-department="아동부" aria-label="아동부 일정관리" aria-controls="schedulePanel" aria-expanded="false">↳ 일정관리</button></div>
+          <div class="department-card"><label><input type="radio" name="department" value="청소년부" required>청소년부</label><button class="schedule-link" type="button" data-department="청소년부" aria-label="청소년부 일정관리" aria-controls="schedulePanel" aria-expanded="false">↳ 일정관리</button></div>
+          <div class="department-card"><label><input type="radio" name="department" value="청년부" required>청년부</label><button class="schedule-link" type="button" data-department="청년부" aria-label="청년부 일정관리" aria-controls="schedulePanel" aria-expanded="false">↳ 일정관리</button></div>
+        </div>
+      </fieldset>
+    </form>
+    <section class="schedule-panel" id="schedulePanel" aria-labelledby="scheduleTitle" hidden>
+      <h2 id="scheduleTitle" tabindex="-1">일정관리</h2>
+      <p>날짜를 눌러 부서별 일정 항목을 확인하세요.</p>
+      <div class="calendar-toolbar">
+        <button type="button" id="previousMonth" aria-label="이전 달">‹</button>
+        <h3 id="calendarMonth" aria-live="polite"></h3>
+        <button type="button" id="nextMonth" aria-label="다음 달">›</button>
+        <button type="button" id="goToday">오늘</button>
+      </div>
+      <div class="weekdays" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+      <div class="calendar-days" id="calendarDays" role="group" aria-labelledby="calendarMonth"></div>
+      <section class="date-items" id="dateItems" aria-labelledby="dateItemsTitle" hidden>
+        <h3 id="dateItemsTitle" tabindex="-1"></h3>
+        <button id="addEvent" type="button" disabled>일정 추가</button>
+        <button id="refreshSchedule" type="button">최신 내용 불러오기</button>
+        <p id="eventMessage" role="status"></p>
+        <div id="departmentItems"></div>
+      </section>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#departmentForm');
+    const schedulePanel = document.querySelector('#schedulePanel');
+    const scheduleTitle = document.querySelector('#scheduleTitle');
+    const scheduleLinks = document.querySelectorAll('.schedule-link');
+    // 부서별 항목이 정해지면 해당 목록에 추가합니다.
+    const departmentFields = {
+      '예배부': ['인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4'],
+      '방송부': ['설교자', '사회자', '특송자', '음향', '영상', '자막', '조명', 'PD'],
+      '아동부': ['설교자', '기도자', '찬양인도자', '건반', '드럼', '교사1', '교사2', '교사3', '교사4', '교사5', '교사6'],
+      '청소년부': ['설교자', '인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '교사1', '교사2', '교사3', '교사4', '교사5', '교사6'],
+      '청년부': ['인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '싱어5', '싱어6']
+    };
+    let currentUser = null;
+    let temporaryOpen = false;
+    let csrfToken = null;
+    let renderId = 0;
+    let activeEventId = null;
+    let authTab = 'login';
+    async function api(path, body) {
+      let response;
+      try { response = await fetch(path, {
+        method: body ? 'POST' : 'GET',
+        headers: body ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken || '' } : {},
+        body: body ? JSON.stringify(body) : undefined
+      }); } catch { throw new Error('서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'); }
+      let result;
+      try { result = await response.json(); }
+      catch { throw new Error('서버 응답을 확인하지 못했습니다. 잠시 후 다시 시도하세요.'); }
+      if (!response.ok) throw new Error(result.error || '요청을 처리하지 못했습니다.');
+      return result;
+    }
+    function showAccount() {
+      const signedIn = currentUser && currentUser.id !== null;
+      document.querySelector('#accountStatus').textContent = signedIn
+        ? `${currentUser.username} · ${currentUser.admin ? '관리자' : '일반 사용자'}`
+        : temporaryOpen ? '임시 편집 모드 · 로그인 없이 사용할 수 있습니다.' : '로그인 후 일정 입력과 잠금을 사용할 수 있습니다.';
+      document.querySelector('#loginForm').hidden = signedIn || authTab !== 'login';
+      document.querySelector('#signupForm').hidden = signedIn || authTab !== 'signup';
+      document.querySelector('#authTabs').hidden = signedIn;
+      document.querySelector('#logoutButton').hidden = !signedIn;
+      document.querySelector('#loginTab').setAttribute('aria-selected', String(authTab === 'login'));
+      document.querySelector('#signupTab').setAttribute('aria-selected', String(authTab === 'signup'));
+      document.querySelector('#loginTab').tabIndex = authTab === 'login' ? 0 : -1;
+      document.querySelector('#signupTab').tabIndex = authTab === 'signup' ? 0 : -1;
+      document.querySelector('#authHelp').textContent = authTab === 'signup' && !signedIn
+        ? `아이디와 비밀번호를 입력해 가입하세요. 비밀번호는 ${temporaryOpen ? '4' : '12'}자 이상이며, 비밀번호 확인과 같아야 합니다. 가입한 계정은 일반 사용자로 등록됩니다.`
+        : temporaryOpen ? '현재는 로그인하지 않아도 일정을 추가하고 수정할 수 있습니다. 계정이 없으면 아래 회원가입 탭을 눌러 주세요.'
+        : '계정이 없으면 아래 회원가입 탭을 눌러 주세요.';
+    }
+    function switchAuthTab(tab) {
+      authTab = tab;
+      document.querySelector('#authMessage').textContent = '';
+      document.querySelector('#password').value = '';
+      document.querySelector('#signupPassword').value = '';
+      document.querySelector('#signupPasswordConfirm').value = '';
+      showAccount();
+    }
+    document.querySelector('#loginTab').addEventListener('click', () => switchAuthTab('login'));
+    document.querySelector('#signupTab').addEventListener('click', () => switchAuthTab('signup'));
+    document.querySelector('#authTabs').addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      switchAuthTab(event.key === 'Home' ? 'login' : event.key === 'End' ? 'signup' : authTab === 'login' ? 'signup' : 'login');
+      document.querySelector(authTab === 'login' ? '#loginTab' : '#signupTab').focus();
+    });
+    document.querySelector('#signupForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = event.currentTarget.querySelector('button');
+      button.disabled = true;
+      const username = document.querySelector('#signupUsername').value.trim();
+      try {
+        const result = await api('/api/register', { username, password: document.querySelector('#signupPassword').value, password_confirm: document.querySelector('#signupPasswordConfirm').value });
+        switchAuthTab('login');
+        document.querySelector('#username').value = username;
+        document.querySelector('#authMessage').textContent = result.message;
+        document.querySelector('#password').focus();
+      } catch (error) { document.querySelector('#authMessage').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    document.querySelector('#loginForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = event.currentTarget.querySelector('button');
+      button.disabled = true;
+      try {
+        if (!document.querySelector('#username').value.trim() || !document.querySelector('#password').value) throw new Error('아이디와 비밀번호를 입력하세요.');
+        const result = await api('/api/login', { username: document.querySelector('#username').value, password: document.querySelector('#password').value });
+        currentUser = result.user;
+        csrfToken = result.csrf;
+        document.querySelector('#password').value = '';
+        document.querySelector('#authMessage').textContent = '';
+        showAccount();
+        renderDateItems();
+      } catch (error) { document.querySelector('#authMessage').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    document.querySelector('#logoutButton').addEventListener('click', async () => {
+      try {
+        await api('/api/logout', {});
+        const result = await api('/api/session');
+        currentUser = result.user;
+        csrfToken = result.csrf;
+        showAccount();
+        renderDateItems();
+      } catch (error) { document.querySelector('#authMessage').textContent = error.message; }
+    });
+    api('/api/session').then(result => {
+      temporaryOpen = result.temporary_open === true;
+      currentUser = result.user;
+      csrfToken = result.csrf;
+      showAccount();
+      renderDateItems();
+    }).catch(() => {
+      showAccount();
+      document.querySelector('#authMessage').textContent = '로그인 서버에 연결하지 못했습니다. 전용 앱 서버로 실행해 주세요.';
+    });
+    const todayParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const todayPart = type => Number(todayParts.find(part => part.type === type).value);
+    const today = new Date(todayPart('year'), todayPart('month') - 1, todayPart('day'));
+    let visibleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    let activeDepartment = null;
+    const selectedDates = new Map();
+    const calendarDays = document.querySelector('#calendarDays');
+    const dateItems = document.querySelector('#dateItems');
+    const dateItemsTitle = document.querySelector('#dateItemsTitle');
+    function dateKey(date) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+    async function renderDateItems({ eventId = null } = {}) {
+      activeEventId = eventId;
+      const requestId = ++renderId;
+      const addButton = document.querySelector('#addEvent');
+      addButton.disabled = true;
+      document.querySelector('#eventMessage').textContent = '';
+      const selected = selectedDates.get(activeDepartment);
+      dateItems.hidden = !selected;
+      if (!selected) return;
+      dateItemsTitle.textContent = `${activeDepartment} · ${selected.getFullYear()}년 ${selected.getMonth() + 1}월 ${selected.getDate()}일`;
+      const container = document.querySelector('#departmentItems');
+      container.replaceChildren();
+      const fields = departmentFields[activeDepartment];
+      if (!fields.length) {
+        const message = document.createElement('p');
+        message.textContent = '이 부서의 일정 항목은 아직 정해지지 않았습니다.';
+        container.append(message);
+      } else {
+        if (!currentUser) {
+          container.textContent = '일정을 보거나 입력하려면 먼저 로그인하세요.';
+          return;
+        }
+        const department = activeDepartment;
+        const day = dateKey(selected);
+        const user = currentUser;
+        container.textContent = '일정을 불러오는 중…';
+        let schedules;
+        try { schedules = await api('/api/schedule?' + new URLSearchParams({ department, day })); }
+        catch (error) {
+          if (requestId === renderId) container.textContent = error.message;
+          return;
+        }
+        if (requestId !== renderId) return;
+        container.replaceChildren();
+        addButton.disabled = false;
+        const eventList = document.createElement('div');
+        eventList.className = 'event-list';
+        if (!schedules.events.length) {
+          const empty = document.createElement('p');
+          empty.textContent = '등록된 일정이 없습니다. 일정 추가를 눌러 시작하세요.';
+          eventList.append(empty);
+        }
+        schedules.events.forEach(event => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = event.title;
+          button.setAttribute('aria-pressed', String(event.id === eventId));
+          button.addEventListener('click', () => renderDateItems({ eventId: event.id }));
+          eventList.append(button);
+        });
+        container.append(eventList);
+        if (!eventId) return;
+        let result;
+        try { result = await api('/api/event?' + new URLSearchParams({ department, day, event_id: eventId })); }
+        catch (error) {
+          if (requestId === renderId) document.querySelector('#eventMessage').textContent = error.message;
+          return;
+        }
+        if (requestId !== renderId) return;
+        let event = result.event;
+        const titleForm = document.createElement('form');
+        titleForm.className = 'event-title-form';
+        const titleLabel = document.createElement('label');
+        titleLabel.textContent = '일정 제목';
+        const titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.required = true;
+        titleInput.maxLength = 100;
+        titleInput.value = event.title;
+        titleLabel.append(titleInput);
+        const titleSave = document.createElement('button');
+        titleSave.type = 'submit';
+        titleSave.textContent = '제목 저장';
+        titleForm.append(titleLabel, titleSave);
+        titleForm.addEventListener('submit', async submitEvent => {
+          submitEvent.preventDefault();
+          titleSave.disabled = true;
+          try {
+            const renamed = await api('/api/event', { action: 'rename', department, day, event_id: eventId, title: titleInput.value, version: event.version });
+            event = renamed.event;
+            titleInput.value = event.title;
+            eventList.querySelector('button[aria-pressed="true"]').textContent = event.title;
+            if (requestId === renderId) document.querySelector('#eventMessage').textContent = '일정 제목을 저장했습니다.';
+          } catch (error) {
+            if (requestId === renderId) document.querySelector('#eventMessage').textContent = error.message;
+          } finally { titleSave.disabled = false; }
+        });
+        container.append(titleForm);
+        const list = document.createElement('div');
+        list.className = 'schedule-fields';
+        const saveStatus = document.createElement('p');
+        saveStatus.className = 'save-status';
+        saveStatus.setAttribute('role', 'status');
+        saveStatus.textContent = temporaryOpen ? '입력 후 저장을 누르세요. 지금은 잠금 없이 편집할 수 있습니다.' : '입력 후 저장을 누르세요. 최초 입력자만 잠글 수 있고, 관리자 또는 잠금을 건 사람만 해제할 수 있습니다.';
+        result.entries.forEach(entry => {
+          const field = entry.field;
+          const item = document.createElement('div');
+          item.className = 'field-row';
+          const label = document.createElement('label');
+          label.className = 'schedule-field';
+          const title = document.createElement('span');
+          title.textContent = field;
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.placeholder = '텍스트 입력';
+          input.maxLength = 500;
+          input.value = entry.value;
+          const save = document.createElement('button');
+          save.type = 'button';
+          save.textContent = '저장';
+          save.setAttribute('aria-label', `${field} 저장`);
+          const lock = document.createElement('button');
+          lock.type = 'button';
+          const meta = document.createElement('span');
+          meta.className = 'field-meta';
+          function updateRow() {
+            const locked = !temporaryOpen && entry.locked_by !== null;
+            input.disabled = locked;
+            save.disabled = locked;
+            lock.textContent = locked ? '🔒 해제' : '🔓 잠금';
+            lock.setAttribute('aria-label', `${field} ${locked ? '잠금 해제' : '잠금'}`);
+            lock.disabled = locked ? !(user.admin || entry.locked_by === user.id) : !(entry.owner_id === user.id && entry.value.trim());
+            lock.hidden = temporaryOpen;
+            meta.hidden = temporaryOpen;
+            meta.textContent = `${entry.owner ? '최초 입력: ' + entry.owner : '아직 입력되지 않았습니다.'}${locked ? ' · 잠금: ' + entry.locker : ''}`;
+          }
+          async function mutate(action) {
+            input.disabled = save.disabled = lock.disabled = true;
+            try {
+              const result = await api('/api/field', { department, day, event_id: eventId, field, action, value: input.value, version: entry.version });
+              entry = result.entry;
+              saveStatus.textContent = action === 'save' ? `${field} 저장 완료` : `${field} ${action === 'lock' ? '잠금' : '잠금 해제'} 완료`;
+            } catch (error) {
+              saveStatus.textContent = error.message;
+            } finally { updateRow(); }
+          }
+          save.addEventListener('click', () => mutate('save'));
+          lock.addEventListener('click', () => {
+            if (input.value !== entry.value) {
+              saveStatus.textContent = '변경한 내용을 먼저 저장한 후 잠가 주세요.';
+              return;
+            }
+            mutate(entry.locked_by !== null ? 'unlock' : 'lock');
+          });
+          label.append(title, input);
+          item.append(label, save, lock, meta);
+          updateRow();
+          list.append(item);
+        });
+        container.append(list, saveStatus);
+      }
+    }
+    document.querySelector('#refreshSchedule').addEventListener('click', () => renderDateItems({ eventId: activeEventId }));
+    document.querySelector('#addEvent').addEventListener('click', async () => {
+      const button = document.querySelector('#addEvent');
+      const selected = selectedDates.get(activeDepartment);
+      if (!currentUser || !selected) return;
+      const requestId = renderId;
+      const department = activeDepartment;
+      const day = dateKey(selected);
+      button.disabled = true;
+      try {
+        const created = await api('/api/event', { action: 'create', department, day, title: '새 일정' });
+        if (requestId === renderId) await renderDateItems({ eventId: created.event.id });
+      } catch (error) {
+        if (requestId === renderId) document.querySelector('#eventMessage').textContent = error.message;
+      } finally {
+        if (requestId === renderId) button.disabled = !currentUser;
+      }
+    });
+    function renderCalendar() {
+      const year = visibleMonth.getFullYear();
+      const month = visibleMonth.getMonth();
+      document.querySelector('#calendarMonth').textContent = `${year}년 ${month + 1}월`;
+      calendarDays.replaceChildren();
+      for (let i = 0; i < new Date(year, month, 1).getDay(); i++) {
+        const spacer = document.createElement('span');
+        spacer.setAttribute('aria-hidden', 'true');
+        calendarDays.append(spacer);
+      }
+      const selected = selectedDates.get(activeDepartment);
+      for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) {
+        const date = new Date(year, month, day);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = day;
+        button.setAttribute('aria-label', `${year}년 ${month + 1}월 ${day}일`);
+        button.setAttribute('aria-pressed', String(Boolean(selected && dateKey(date) === dateKey(selected))));
+        if (dateKey(date) === dateKey(today)) button.setAttribute('aria-current', 'date');
+        button.addEventListener('click', () => {
+          selectedDates.set(activeDepartment, date);
+          renderCalendar();
+          renderDateItems();
+          dateItemsTitle.focus();
+        });
+        calendarDays.append(button);
+      }
+    }
+    function moveMonth(offset) {
+      visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + offset, 1);
+      renderCalendar();
+    }
+    document.querySelector('#previousMonth').addEventListener('click', () => moveMonth(-1));
+    document.querySelector('#nextMonth').addEventListener('click', () => moveMonth(1));
+    document.querySelector('#goToday').addEventListener('click', () => {
+      visibleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      selectedDates.set(activeDepartment, today);
+      renderCalendar();
+      renderDateItems();
+      dateItemsTitle.focus();
+    });
+    function openSchedule(department, focus = false) {
+      activeDepartment = department;
+      const selected = selectedDates.get(department);
+      visibleMonth = selected ? new Date(selected.getFullYear(), selected.getMonth(), 1) : new Date(today.getFullYear(), today.getMonth(), 1);
+      scheduleTitle.textContent = `${department} 일정관리`;
+      schedulePanel.hidden = false;
+      renderCalendar();
+      renderDateItems();
+      scheduleLinks.forEach(link => link.setAttribute('aria-expanded', String(link.dataset.department === department)));
+      if (focus) scheduleTitle.focus();
+    }
+    form.addEventListener('change', () => {
+      openSchedule(new FormData(form).get('department'), true);
+    });
+    scheduleLinks.forEach(link => link.addEventListener('click', () => {
+      const department = link.dataset.department;
+      form.querySelectorAll('input[name="department"]').forEach(input => { input.checked = input.value === department; });
+      openSchedule(department, true);
+    }));
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+    });
+  </script>
+</body>
+</html>
