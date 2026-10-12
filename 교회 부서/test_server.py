@@ -1,4 +1,5 @@
 import http.cookiejar
+import base64
 import json
 from pathlib import Path
 import secrets
@@ -328,6 +329,62 @@ class LockTests(unittest.TestCase):
         _, current = self.guest.call('/api/session')
         self.assertIsNone(current['user']['id'])
         self.assertTrue(current['temporary_open'])
+
+    def notice(self, **extra):
+        return self.clients['owner'].call('/api/notice', {'action': 'create', 'department': '예배부',
+            'title': '새 공지', 'content': '공지 내용', **extra})
+
+    def test_board_posts_are_separate_by_department_and_kind(self):
+        self.assertEqual(self.notice()[0], 200)
+        for kind in ('물품구매요청', '개선안요청', '애로사항'):
+            self.assertEqual(self.notice(kind=kind, title=kind)[0], 200)
+        for kind in server.BOARD_KINDS:
+            status, result = self.clients['owner'].call('/api/notices?department=예배부&kind='+kind)
+            self.assertEqual(status, 200)
+            self.assertEqual(len(result['notices']), 1)
+            self.assertEqual(result['notices'][0]['kind'], kind)
+        _, result = self.clients['owner'].call('/api/notices?department=방송부')
+        self.assertEqual(result['notices'], [])
+
+    def test_board_edit_preserves_attachment_and_checks_versions(self):
+        _, result = self.notice(attachment={'name': '안내.txt', 'data': base64.b64encode(b'example attachment').decode()})
+        notice = result['notice']
+        status, result = self.notice(action='update', notice_id=notice['id'], version=0, title='수정 제목', content='수정 내용')
+        self.assertEqual(status, 200)
+        self.assertEqual(result['notice']['attachment']['name'], '안내.txt')
+        self.assertEqual(result['notice']['title'], '수정 제목')
+        self.assertEqual(self.notice(action='update', notice_id=notice['id'], version=0)[0], 409)
+        status, result = self.notice(action='update', notice_id=notice['id'], version=1, remove_attachment=True)
+        self.assertEqual(status, 200)
+        self.assertIsNone(result['notice']['attachment'])
+
+    def test_attachment_is_downloaded_as_binary_and_scoped_to_board(self):
+        content = b'<script>test</script>'
+        _, result = self.notice(attachment={'name': 'test.html', 'data': base64.b64encode(content).decode()})
+        notice_id = result['notice']['id']
+        path = '/api/attachment?department=예배부&notice_id='+notice_id
+        request = Request(self.clients['owner'].url+quote(path,safe='/?=&'))
+        with self.clients['owner'].opener.open(request) as response:
+            self.assertEqual(response.read(), content)
+            self.assertEqual(response.headers['Content-Type'], 'application/octet-stream')
+            self.assertTrue(response.headers['Content-Disposition'].startswith('attachment;'))
+            self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(self.clients['owner'].call(path+'&kind=애로사항')[0], 404)
+        self.assertEqual(self.guest.call(path)[0], 401)
+
+    def test_notice_validation_and_anonymous_creation_when_enabled(self):
+        for extra in ({'title': ''}, {'content': ''}, {'kind': '없는 게시판'},
+                      {'attachment': {'name': 'x.txt', 'data': 'invalid'}},
+                      {'attachment': {'name': 'x\n.txt', 'data': ''}},
+                      {'attachment': {'name': 'large.txt', 'data': base64.b64encode(b'x'*(5*1024*1024+1)).decode()}}):
+            self.assertEqual(self.notice(**extra)[0], 400)
+        self.http.temporary_open = self.http.login_disabled = True
+        self.http.open_csrf = secrets.token_urlsafe(32)
+        self.guest.csrf = self.guest.call('/api/session')[1]['csrf']
+        status, result = self.guest.call('/api/notice', {'action': 'create', 'department': '청년부',
+            'kind': '물품구매요청', 'title': '구매 요청', 'content': '장비 필요'})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['notice']['kind'], '물품구매요청')
 
 
 if __name__ == '__main__':

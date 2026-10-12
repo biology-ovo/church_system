@@ -71,6 +71,27 @@
     .event-title-form label { display: grid; gap: 8px; flex: 1 1 200px; padding: 0; min-height: 0; border: 0; cursor: default; }
     .event-title-form input { width: 100%; height: 44px; padding: 10px; border: 1px solid #dce2ec; border-radius: 8px; font: inherit; }
     .event-title-form button { width: auto; margin: 0; align-self: end; }
+    .notice-panel { margin-top: 24px; padding: 28px; border: 1px solid #e1e6ef; border-radius: 20px; background: white; }
+    .notice-panel h2 { margin-top: 0; }
+    .notice-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+    .notice-toolbar button { width: auto; margin: 0; }
+    .board-scroll { overflow-x: auto; }
+    .notice-table { width: 100%; border-collapse: collapse; min-width: 420px; table-layout: fixed; }
+    .notice-table th, .notice-table td { padding: 14px 10px; border-bottom: 1px solid #e1e6ef; text-align: left; overflow-wrap: anywhere; }
+    .notice-table th { background: #f4f6fa; }
+    .notice-table button { margin: 0; padding: 0; width: auto; background: transparent; color: #374fac; text-align: left; overflow-wrap: anywhere; }
+    .notice-detail { margin-top: 24px; padding: 20px; background: #f7f8fc; border-radius: 12px; }
+    .notice-detail h3, .notice-detail p { overflow-wrap: anywhere; }
+    #noticeBody { white-space: pre-wrap; line-height: 1.8; }
+    .notice-editor { margin-top: 24px; padding: 20px; }
+    .notice-editor label { display: grid; gap: 8px; min-height: 0; margin-bottom: 16px; padding: 0; border: 0; cursor: default; }
+    .notice-editor input:not([type="checkbox"]), .notice-editor textarea { width: 100%; height: auto; padding: 12px; border: 1px solid #dce2ec; border-radius: 8px; font: inherit; }
+    .notice-editor textarea { resize: vertical; min-height: 180px; }
+    .notice-editor .remove-attachment { display: flex; }
+    .notice-editor button { width: auto; margin: 0 8px 0 0; }
+    .suggestion-categories { display: flex; flex-wrap: wrap; gap: 12px; }
+    .suggestion-categories button { margin: 0; }
+    @media (max-width: 600px) { .notice-panel { padding: 16px; } .notice-editor { padding: 14px; } }
     @media (max-width: 600px) { main { margin-top: 32px; padding: 0 16px; } form { padding: 20px; } .departments { grid-template-columns: 1fr; } label { min-height: 64px; } button { width: 100%; } }
     @media (max-width: 600px) { .schedule-panel { padding: 16px; } .calendar-days button { min-height: 44px; } .calendar-toolbar h3 { font-size: 18px; } }
     @media (max-width: 600px) { .field-row { grid-template-columns: 1fr auto auto; } .schedule-field { grid-template-columns: 64px minmax(0, 1fr); gap: 8px; } .field-row button { padding: 10px 8px; } }
@@ -134,6 +155,31 @@
         <div id="departmentItems"></div>
       </section>
     </section>
+    <section class="notice-panel" id="suggestionPanel" aria-labelledby="suggestionTitle" hidden>
+      <h2 id="suggestionTitle" tabindex="-1">건의사항</h2>
+      <div class="suggestion-categories"><button type="button" data-board-kind="물품구매요청">물품구매요청</button><button type="button" data-board-kind="개선안요청">개선안요청</button><button type="button" data-board-kind="애로사항">애로사항</button></div>
+    </section>
+    <section class="notice-panel" id="noticePanel" aria-labelledby="noticeTitle" hidden>
+      <h2 id="noticeTitle" tabindex="-1">공지사항</h2>
+      <div class="notice-toolbar"><button type="button" id="newNotice">공지 작성</button><button type="button" id="refreshNotices">새로 불러오기</button></div>
+      <p id="noticeMessage" role="status"></p>
+      <div id="noticeList" class="board-scroll"></div>
+      <article id="noticeDetail" class="notice-detail" hidden>
+        <h3 id="noticeDetailTitle" tabindex="-1"></h3>
+        <p id="noticeBody"></p>
+        <p id="noticeAttachment"></p>
+        <button type="button" id="editNotice">수정</button>
+      </article>
+      <form id="noticeForm" class="notice-editor" novalidate hidden>
+        <label>제목<input id="noticeSubject" maxlength="100" required></label>
+        <label>내용<textarea id="noticeContent" maxlength="20000" rows="8" required></textarea></label>
+        <label>첨부파일<input id="noticeFile" type="file"></label>
+        <p id="currentAttachment"></p>
+        <label id="removeAttachmentLabel" class="remove-attachment" hidden><input id="removeAttachment" type="checkbox">기존 첨부파일 삭제</label>
+        <p class="auth-help">첨부파일은 한 개, 5메가바이트 이하로 등록할 수 있습니다.</p>
+        <button type="submit">공지 저장</button><button type="button" id="cancelNotice">취소</button>
+      </form>
+    </section>
   </main>
   <script>
     const form = document.querySelector('#departmentForm');
@@ -156,10 +202,14 @@
     let renderId = 0;
     let activeEventId = null;
     let authTab = 'login';
+    let activeBoard = null;
+    let activeNotice = null;
+    let boardRenderId = 0;
     let localMode = false;
     const LOCAL_KEY = 'church-department-events-v1';
     function localApi(path, body) {
       if (path === '/api/session') return { user: { id: null, username: '임시 편집', admin: false }, csrf: null, temporary_open: true, admin_suspended: true, login_disabled: true };
+      if (path.startsWith('/api/notice')) return localNoticeApi(path, body);
       let events;
       try {
         events = JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]');
@@ -209,6 +259,42 @@
       }
       throw new Error('현재는 로그인 없이 일정 기능만 사용할 수 있습니다.');
     }
+    function localNoticeApi(path, body) {
+      const key = 'church-department-notices-v1';
+      let notices;
+      try {
+        notices = JSON.parse(localStorage.getItem(key) || '[]');
+        if (!Array.isArray(notices)) throw new Error();
+      } catch { throw new Error('저장된 공지사항을 불러오지 못했습니다. 브라우저 저장 공간을 확인하세요.'); }
+      const params = body || Object.fromEntries(new URL(path, 'http://local.invalid').searchParams);
+      if (!departmentFields[params.department]) throw new Error('부서를 확인하세요.');
+      const kind = params.kind || '공지사항';
+      const notice = notices.find(item => item.id === params.notice_id && item.department === params.department && (item.kind || '공지사항') === kind);
+      if (!body) {
+        if (path.startsWith('/api/notices?')) return { notices: notices.filter(item => item.department === params.department && (item.kind || '공지사항') === kind).sort((a, b) => b.updated_at - a.updated_at) };
+        if (!notice) throw new Error('공지사항을 찾을 수 없습니다.');
+        return { notice };
+      }
+      if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 100) throw new Error('공지 제목은 1~100자로 입력하세요.');
+      if (typeof body.content !== 'string' || !body.content.trim() || body.content.length > 20000) throw new Error('공지 내용은 1~20000자로 입력하세요.');
+      const updated = body.action === 'create' ? {
+        id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''),
+        department: body.department, kind, version: 0, attachment: null
+      } : notice ? { ...notice } : null;
+      if (!updated) throw new Error('공지사항을 찾을 수 없습니다.');
+      if (body.action !== 'create' && updated.version !== body.version) throw new Error('공지사항이 변경되었습니다. 최신 내용을 불러오세요.');
+      updated.title = body.title.trim();
+      updated.content = body.content;
+      updated.updated_at = Date.now() / 1000;
+      if (body.action !== 'create') updated.version++;
+      if (body.remove_attachment) updated.attachment = null;
+      if (body.attachment) updated.attachment = { ...body.attachment, size: atob(body.attachment.data).length };
+      if (body.action === 'create') notices.push(updated);
+      else notices[notices.findIndex(item => item.id === updated.id)] = updated;
+      try { localStorage.setItem(key, JSON.stringify(notices)); }
+      catch { throw new Error('공지를 저장하지 못했습니다. 브라우저 저장 공간이 부족하면 첨부파일을 줄여 주세요.'); }
+      return { notice: updated };
+    }
     async function api(path, body) {
       if (localMode) return localApi(path, body);
       let response;
@@ -227,8 +313,8 @@
       document.querySelector('.auth-panel').hidden = loginDisabled;
       document.querySelector('#usageNotice').hidden = !loginDisabled;
       document.querySelector('#usageNotice').textContent = localMode
-        ? '로그인 없이 사용할 수 있습니다. 일정은 현재 브라우저에 저장됩니다.'
-        : '로그인 없이 모든 부서의 일정을 추가하고 수정할 수 있습니다.';
+        ? '로그인 없이 사용할 수 있습니다. 일정과 게시글은 현재 브라우저에 저장됩니다.'
+        : '로그인 없이 모든 부서의 일정과 게시판을 사용할 수 있습니다.';
       const signedIn = currentUser && currentUser.id !== null;
       document.querySelector('#accountStatus').textContent = signedIn
         ? `${currentUser.username} · ${adminSuspended ? '회원' : currentUser.admin ? '관리자' : '일반 사용자'}`
@@ -559,6 +645,9 @@
       dateItemsTitle.focus();
     });
     function openSchedule(department, focus = false) {
+      boardRenderId++;
+      document.querySelector('#noticePanel').hidden = true;
+      document.querySelector('#suggestionPanel').hidden = true;
       activeDepartment = department;
       const selected = selectedDates.get(department);
       visibleMonth = selected ? new Date(selected.getFullYear(), selected.getMonth(), 1) : new Date(today.getFullYear(), today.getMonth(), 1);
@@ -569,6 +658,176 @@
       scheduleLinks.forEach(link => link.setAttribute('aria-expanded', String(link.dataset.department === department)));
       if (focus) scheduleTitle.focus();
     }
+    function selectDepartment(department) {
+      form.querySelectorAll('input[name="department"]').forEach(input => { input.checked = input.value === department; });
+    }
+    function boardParams(extra = {}, board = activeBoard) {
+      return { department: board.department, kind: board.kind, ...extra };
+    }
+    async function openBoard(department, kind = '공지사항') {
+      activeBoard = { department, kind };
+      activeDepartment = department;
+      selectDepartment(department);
+      schedulePanel.hidden = true;
+      renderId++;
+      if (kind === '공지사항') document.querySelector('#suggestionPanel').hidden = true;
+      document.querySelector('#noticePanel').hidden = false;
+      document.querySelector('#noticeTitle').textContent = `${department} ${kind}`;
+      document.querySelector('#newNotice').textContent = kind === '공지사항' ? '공지 작성' : '건의 작성';
+      document.querySelector('#noticeForm button[type="submit"]').textContent = kind === '공지사항' ? '공지 저장' : '건의 저장';
+      await renderBoard();
+      document.querySelector('#noticeTitle').focus();
+    }
+    function openSuggestions(department) {
+      activeDepartment = department;
+      selectDepartment(department);
+      renderId++;
+      boardRenderId++;
+      schedulePanel.hidden = true;
+      document.querySelector('#noticePanel').hidden = true;
+      document.querySelector('#suggestionPanel').hidden = false;
+      document.querySelector('#suggestionTitle').textContent = `${department} 건의사항`;
+      document.querySelector('#suggestionTitle').focus();
+    }
+    async function renderBoard(noticeId = null) {
+      const requestId = ++boardRenderId;
+      const board = { ...activeBoard };
+      const container = document.querySelector('#noticeList');
+      const message = document.querySelector('#noticeMessage');
+      document.querySelector('#noticeForm').hidden = true;
+      document.querySelector('#noticeDetail').hidden = true;
+      document.querySelector('#newNotice').disabled = true;
+      activeNotice = null;
+      message.textContent = localMode ? '게시글과 첨부파일은 현재 브라우저에 저장됩니다. 다른 기기와 공유되지 않습니다.' : '';
+      container.textContent = '게시글을 불러오는 중…';
+      try {
+        const result = await api('/api/notices?' + new URLSearchParams(boardParams({}, board)));
+        if (requestId !== boardRenderId) return;
+        container.replaceChildren();
+        document.querySelector('#newNotice').disabled = false;
+        if (!result.notices.length) container.textContent = '등록된 게시글이 없습니다.';
+        else {
+          const table = document.createElement('table');
+          table.className = 'notice-table';
+          const head = document.createElement('thead');
+          const headings = document.createElement('tr');
+          ['제목', '내용', '첨부파일'].forEach(text => {
+            const cell = document.createElement('th');
+            cell.scope = 'col';
+            cell.textContent = text;
+            headings.append(cell);
+          });
+          head.append(headings);
+          const body = document.createElement('tbody');
+          result.notices.forEach(notice => {
+            const row = document.createElement('tr');
+            const titleCell = document.createElement('td');
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = notice.title;
+            button.addEventListener('click', () => renderBoard(notice.id));
+            titleCell.append(button);
+            const contentCell = document.createElement('td');
+            contentCell.textContent = notice.content.length > 70 ? notice.content.slice(0, 70) + '…' : notice.content;
+            const attachmentCell = document.createElement('td');
+            attachmentCell.textContent = notice.attachment ? notice.attachment.name : '없음';
+            row.append(titleCell, contentCell, attachmentCell);
+            body.append(row);
+          });
+          table.append(head, body);
+          container.append(table);
+        }
+        if (noticeId) {
+          const detail = await api('/api/notice?' + new URLSearchParams(boardParams({ notice_id: noticeId }, board)));
+          if (requestId !== boardRenderId) return;
+          activeNotice = detail.notice;
+          document.querySelector('#noticeDetailTitle').textContent = activeNotice.title;
+          document.querySelector('#noticeBody').textContent = activeNotice.content;
+          const attachment = document.querySelector('#noticeAttachment');
+          attachment.replaceChildren();
+          if (activeNotice.attachment) {
+            const link = document.createElement('a');
+            link.textContent = '첨부파일: ' + activeNotice.attachment.name;
+            link.download = activeNotice.attachment.name;
+            link.href = localMode ? 'data:application/octet-stream;base64,' + activeNotice.attachment.data
+              : '/api/attachment?' + new URLSearchParams(boardParams({ notice_id: noticeId }, board));
+            attachment.append(link);
+          } else attachment.textContent = '첨부파일 없음';
+          document.querySelector('#noticeDetail').hidden = false;
+          document.querySelector('#noticeDetailTitle').focus();
+        }
+      } catch (error) {
+        if (requestId === boardRenderId) {
+          container.textContent = '';
+          message.textContent = error.message;
+        }
+      }
+    }
+    function showNoticeEditor(edit = false) {
+      if (!edit) activeNotice = null;
+      const notice = edit ? activeNotice : null;
+      document.querySelector('#noticeSubject').value = notice ? notice.title : '';
+      document.querySelector('#noticeContent').value = notice ? notice.content : '';
+      document.querySelector('#noticeFile').value = '';
+      document.querySelector('#removeAttachment').checked = false;
+      document.querySelector('#currentAttachment').textContent = notice?.attachment ? '현재 첨부파일: ' + notice.attachment.name : '';
+      document.querySelector('#removeAttachmentLabel').hidden = !notice?.attachment;
+      document.querySelector('#noticeForm').hidden = false;
+      document.querySelector('#noticeDetail').hidden = true;
+      document.querySelector('#noticeSubject').focus();
+    }
+    scheduleLinks.forEach(link => {
+      const department = link.dataset.department;
+      for (const menu of ['공지사항', '건의사항']) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'schedule-link';
+        button.textContent = '↳ ' + menu;
+        button.setAttribute('aria-label', `${department} ${menu}`);
+        button.setAttribute('aria-controls', menu === '공지사항' ? 'noticePanel' : 'suggestionPanel');
+        button.addEventListener('click', () => menu === '공지사항' ? openBoard(department) : openSuggestions(department));
+        link.parentElement.append(button);
+      }
+    });
+    document.querySelectorAll('[data-board-kind]').forEach(button => button.addEventListener('click', () => openBoard(activeDepartment, button.dataset.boardKind)));
+    document.querySelector('#newNotice').addEventListener('click', () => showNoticeEditor());
+    document.querySelector('#editNotice').addEventListener('click', () => showNoticeEditor(true));
+    document.querySelector('#refreshNotices').addEventListener('click', () => renderBoard());
+    document.querySelector('#cancelNotice').addEventListener('click', () => {
+      document.querySelector('#noticeForm').hidden = true;
+      document.querySelector('#noticeDetail').hidden = !activeNotice;
+    });
+    document.querySelector('#noticeForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const requestId = boardRenderId;
+      const board = { ...activeBoard };
+      const notice = activeNotice;
+      const button = event.currentTarget.querySelector('button[type="submit"]');
+      const file = document.querySelector('#noticeFile').files[0];
+      const payload = boardParams({ action: notice ? 'update' : 'create', notice_id: notice?.id, version: notice?.version,
+        title: document.querySelector('#noticeSubject').value, content: document.querySelector('#noticeContent').value,
+        remove_attachment: document.querySelector('#removeAttachment').checked }, board);
+      button.disabled = true;
+      try {
+        if (file) {
+          if (file.size > 5 * 1024 * 1024) throw new Error('첨부파일은 5메가바이트 이하로 등록하세요.');
+          const encoded = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = () => reject(new Error('첨부파일을 읽지 못했습니다.'));
+            reader.readAsDataURL(file);
+          });
+          payload.attachment = { name: file.name, data: encoded };
+        }
+        const result = await api('/api/notice', payload);
+        if (requestId === boardRenderId) {
+          await renderBoard(result.notice.id);
+          document.querySelector('#noticeMessage').textContent = '게시글을 저장했습니다.';
+        }
+      } catch (error) {
+        if (requestId === boardRenderId) document.querySelector('#noticeMessage').textContent = error.message;
+      } finally { button.disabled = false; }
+    });
     form.addEventListener('change', () => {
       openSchedule(new FormData(form).get('department'), true);
     });

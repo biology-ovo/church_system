@@ -1,5 +1,7 @@
 """Authenticated department schedules. Python standard library only."""
 import argparse
+import base64
+import binascii
 from datetime import date
 import getpass
 import hashlib
@@ -10,7 +12,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 FIELDS = {
     '예배부': ['인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4'],
@@ -19,6 +21,7 @@ FIELDS = {
     '청소년부': ['설교자', '인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '교사1', '교사2', '교사3', '교사4', '교사5', '교사6'],
     '청년부': ['인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '싱어5', '싱어6'],
 }
+BOARD_KINDS = ('공지사항', '물품구매요청', '개선안요청', '애로사항')
 
 
 def connect(path):
@@ -58,7 +61,15 @@ def initialize(path):
         CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS signup_attempts (
           address TEXT PRIMARY KEY, count INTEGER NOT NULL, since REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS notices (
+          id TEXT PRIMARY KEY, department TEXT NOT NULL, title TEXT NOT NULL,
+          content TEXT NOT NULL, attachment_name TEXT, attachment_data BLOB,
+          updated_at REAL NOT NULL, version INTEGER NOT NULL DEFAULT 0,
+          kind TEXT NOT NULL DEFAULT '공지사항');
+        CREATE INDEX IF NOT EXISTS notices_by_department ON notices(department);
         ''')
+        if 'kind' not in {row['name'] for row in db.execute('PRAGMA table_info(notices)')}:
+            db.execute("ALTER TABLE notices ADD COLUMN kind TEXT NOT NULL DEFAULT '공지사항'")
         db.execute('BEGIN IMMEDIATE')
         if not db.execute("SELECT 1 FROM migrations WHERE name='multiple-events-v1'").fetchone():
             for row in db.execute('SELECT DISTINCT department, day FROM entries').fetchall():
@@ -108,6 +119,14 @@ def public_entry(db, event_id, field):
 
 def event_payload(db, event):
     return {'event': dict(event), 'entries': [public_entry(db, event['id'], field) for field in FIELDS[event['department']]]}
+
+
+NOTICE_SELECT = 'SELECT id,department,kind,title,content,attachment_name,length(attachment_data) AS attachment_size,updated_at,version FROM notices'
+
+
+def notice_payload(row):
+    return {**{key: row[key] for key in ('id', 'department', 'kind', 'title', 'content', 'updated_at', 'version')},
+            'attachment': {'name': row['attachment_name'], 'size': row['attachment_size']} if row['attachment_name'] else None}
 
 
 class ApiError(Exception):
@@ -179,6 +198,29 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, '일정 제목은 1~100자로 입력하세요.')
         return title.strip()
 
+    def notice_department(self, body):
+        department = body.get('department')
+        if not isinstance(department, str) or department not in FIELDS:
+            raise ApiError(400, '부서를 확인하세요.')
+        return department
+
+    def notice_target(self, db, body):
+        department = self.notice_department(body)
+        kind = self.notice_kind(body)
+        notice_id = body.get('notice_id')
+        if not isinstance(notice_id, str):
+            raise ApiError(400, '공지사항을 선택하세요.')
+        row = db.execute(NOTICE_SELECT + ' WHERE id=? AND department=? AND kind=?', (notice_id, department, kind)).fetchone()
+        if not row:
+            raise ApiError(404, '해당 부서의 공지사항을 찾을 수 없습니다.')
+        return row
+
+    def notice_kind(self, body):
+        kind = body.get('kind', '공지사항')
+        if kind not in BOARD_KINDS:
+            raise ApiError(400, '게시판 항목을 확인하세요.')
+        return kind
+
     def do_GET(self):
         path = urlsplit(self.path)
         if path.path in ('/', '/department-app/', '/department-app/index.html', '/index.html'):
@@ -207,9 +249,33 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if not user:
                     raise ApiError(401, '로그인이 필요합니다.')
+                params = {k: v[0] for k, v in parse_qs(path.query).items()}
+                if path.path == '/api/notices':
+                    department = self.notice_department(params)
+                    kind = self.notice_kind(params)
+                    rows = db.execute(NOTICE_SELECT + ' WHERE department=? AND kind=? ORDER BY updated_at DESC, rowid DESC', (department, kind)).fetchall()
+                    self.reply(200, {'notices': [notice_payload(row) for row in rows]})
+                    return
+                if path.path in ('/api/notice', '/api/attachment'):
+                    row = self.notice_target(db, params)
+                    if path.path == '/api/notice':
+                        self.reply(200, {'notice': notice_payload(row)})
+                        return
+                    if not row['attachment_name']:
+                        raise ApiError(404, '첨부파일이 없습니다.')
+                    attachment = db.execute('SELECT attachment_data FROM notices WHERE id=?', (row['id'],)).fetchone()[0]
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', "attachment; filename*=UTF-8''" + quote(row['attachment_name'], safe=''))
+                    self.send_header('Content-Length', str(len(attachment)))
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.send_header('Content-Security-Policy', 'sandbox')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(attachment)
+                    return
                 if path.path not in ('/api/schedule', '/api/event'):
                     raise ApiError(404, '요청한 페이지가 없습니다.')
-                params = {k: v[0] for k, v in parse_qs(path.query).items()}
                 department, day = self.target(params)
                 if path.path == '/api/event':
                     self.reply(200, event_payload(db, self.event_target(db, params)))
@@ -232,7 +298,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(415, '올바른 요청 형식이 필요합니다.')
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                if not 0 < length <= 16384:
+                limit = 8 * 1024 * 1024 if self.path == '/api/notice' else 16384
+                if not 0 < length <= limit:
                     raise ValueError()
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
@@ -306,6 +373,58 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('DELETE FROM sessions WHERE token_hash=?', (user['token_hash'],))
                     db.commit()
                     self.reply(200, {'ok': True}, self.cookie('', 0))
+                    return
+                if self.path == '/api/notice':
+                    department = self.notice_department(body)
+                    kind = self.notice_kind(body)
+                    title = body.get('title')
+                    if not isinstance(title, str) or not title.strip() or len(title) > 100:
+                        raise ApiError(400, '제목은 1~100자로 입력하세요.')
+                    title = title.strip()
+                    content = body.get('content')
+                    if not isinstance(content, str) or not content.strip() or len(content) > 20000:
+                        raise ApiError(400, '공지 내용은 1~20000자로 입력하세요.')
+                    action = body.get('action')
+                    existing = None
+                    if action == 'create':
+                        notice_id = secrets.token_hex(16)
+                        version = 0
+                    elif action == 'update':
+                        existing = self.notice_target(db, body)
+                        notice_id = existing['id']
+                        if type(body.get('version')) is not int or body['version'] != existing['version']:
+                            raise ApiError(409, '공지사항이 변경되었습니다. 최신 내용을 불러오세요.')
+                        version = existing['version'] + 1
+                    else:
+                        raise ApiError(400, '공지사항 동작을 확인하세요.')
+                    filename, filedata = None, None
+                    if existing:
+                        stored = db.execute('SELECT attachment_name,attachment_data FROM notices WHERE id=?', (notice_id,)).fetchone()
+                        filename, filedata = stored
+                    if body.get('remove_attachment') is True:
+                        filename, filedata = None, None
+                    upload = body.get('attachment')
+                    if upload is not None:
+                        if not isinstance(upload, dict) or not isinstance(upload.get('name'), str) or not isinstance(upload.get('data'), str):
+                            raise ApiError(400, '첨부파일을 확인하세요.')
+                        filename = upload['name'].replace('\\', '/').split('/')[-1]
+                        if not filename.strip() or len(filename) > 180 or any(ord(char) < 32 for char in filename):
+                            raise ApiError(400, '첨부파일 이름은 1~180자로 지정하세요.')
+                        if len(upload['data']) > 7 * 1024 * 1024:
+                            raise ApiError(400, '첨부파일은 5메가바이트 이하로 등록하세요.')
+                        try:
+                            filedata = base64.b64decode(upload['data'], validate=True)
+                        except (ValueError, binascii.Error):
+                            raise ApiError(400, '첨부파일을 읽지 못했습니다.')
+                        if len(filedata) > 5 * 1024 * 1024:
+                            raise ApiError(400, '첨부파일은 5메가바이트 이하로 등록하세요.')
+                    db.execute('''INSERT INTO notices VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                      title=excluded.title,content=excluded.content,attachment_name=excluded.attachment_name,
+                      attachment_data=excluded.attachment_data,updated_at=excluded.updated_at,version=excluded.version''',
+                               (notice_id, department, title, content, filename, filedata, time.time(), version, kind))
+                    result = notice_payload(db.execute(NOTICE_SELECT + ' WHERE id=?', (notice_id,)).fetchone())
+                    db.commit()
+                    self.reply(200, {'notice': result})
                     return
                 if self.path == '/api/event':
                     action = body.get('action')
