@@ -257,6 +257,28 @@ class LockTests(unittest.TestCase):
             row = db.execute("SELECT * FROM users WHERE username='new-member'").fetchone()
             self.assertNotEqual(row['password_hash'], password)
 
+    def test_admin_suspension_masks_existing_sessions_and_preserves_saved_roles(self):
+        self.lock()
+        self.http.admin_suspended = True
+        self.http.temporary_open = True
+        self.http.open_csrf = secrets.token_urlsafe(32)
+        status, session = self.clients['admin'].call('/api/session')
+        self.assertEqual(status, 200)
+        self.assertTrue(session['admin_suspended'])
+        self.assertFalse(session['user']['admin'])
+        self.assertEqual(self.field('admin', 'unlock', 2)[0], 409)
+        password = secrets.token_urlsafe(24)
+        server.create_user(self.path, 'another-admin', password, admin=True)
+        status, login = self.guest.call('/api/login', {'username': 'another-admin', 'password': password})
+        self.assertEqual(status, 200)
+        self.assertFalse(login['user']['admin'])
+        with server.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT admin FROM users WHERE username='admin'").fetchone()['admin'], 1)
+            self.assertEqual(server.public_entry(db, self.event_id, '인도자')['locker'], 'owner')
+        self.http.admin_suspended = self.http.temporary_open = False
+        self.assertTrue(self.clients['admin'].call('/api/session')[1]['user']['admin'])
+        self.assertEqual(self.field('admin', 'unlock', 2)[0], 200)
+
     def test_signup_validation_confirmation_and_origin(self):
         password = secrets.token_urlsafe(24)
         body = {'username': 'new-member', 'password': password, 'password_confirm': password}

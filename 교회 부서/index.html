@@ -149,6 +149,7 @@
     };
     let currentUser = null;
     let temporaryOpen = false;
+    let adminSuspended = false;
     let csrfToken = null;
     let renderId = 0;
     let activeEventId = null;
@@ -169,7 +170,7 @@
     function showAccount() {
       const signedIn = currentUser && currentUser.id !== null;
       document.querySelector('#accountStatus').textContent = signedIn
-        ? `${currentUser.username} · ${currentUser.admin ? '관리자' : '일반 사용자'}`
+        ? `${currentUser.username} · ${adminSuspended ? '회원' : currentUser.admin ? '관리자' : '일반 사용자'}`
         : temporaryOpen ? '임시 편집 모드 · 로그인 없이 사용할 수 있습니다.' : '로그인 후 일정 입력과 잠금을 사용할 수 있습니다.';
       document.querySelector('#loginForm').hidden = signedIn || authTab !== 'login';
       document.querySelector('#signupForm').hidden = signedIn || authTab !== 'signup';
@@ -242,6 +243,7 @@
     });
     api('/api/session').then(result => {
       temporaryOpen = result.temporary_open === true;
+      adminSuspended = result.admin_suspended === true;
       currentUser = result.user;
       csrfToken = result.csrf;
       showAccount();

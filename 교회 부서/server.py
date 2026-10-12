@@ -91,8 +91,8 @@ def create_user(path, username, password, admin=False, temporary_password=False)
                    (username.strip(), salt, password_hash(password, salt), int(admin)))
 
 
-def public_user(user):
-    return {'id': user['id'], 'username': user['username'], 'admin': bool(user['admin'])}
+def public_user(user, admin_suspended=False):
+    return {'id': user['id'], 'username': user['username'], 'admin': bool(user['admin']) and not admin_suspended}
 
 
 def public_entry(db, event_id, field):
@@ -141,9 +141,13 @@ class Handler(BaseHTTPRequestHandler):
             token = cookies['department_session'].value
         except (KeyError, ValueError):
             return guest
-        return db.execute('''SELECT u.*, s.csrf, s.token_hash FROM sessions s
+        user = db.execute('''SELECT u.*, s.csrf, s.token_hash FROM sessions s
             JOIN users u ON u.id=s.user_id WHERE token_hash=? AND expires>?''',
             (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone() or guest
+        if user and getattr(self.server, 'admin_suspended', False):
+            user = dict(user)
+            user['admin'] = 0
+        return user
 
     def target(self, body):
         department, day = body.get('department'), body.get('day')
@@ -192,7 +196,8 @@ class Handler(BaseHTTPRequestHandler):
                 if path.path == '/api/session':
                     self.reply(200, {'user': public_user(user) if user else None,
                                      'csrf': user['csrf'] if user else None,
-                                     'temporary_open': getattr(self.server, 'temporary_open', False)})
+                                     'temporary_open': getattr(self.server, 'temporary_open', False),
+                                     'admin_suspended': getattr(self.server, 'admin_suspended', False)})
                     return
                 if not user:
                     raise ApiError(401, '로그인이 필요합니다.')
@@ -282,7 +287,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('INSERT INTO sessions VALUES(?,?,?,?)',
                                (hashlib.sha256(token.encode()).hexdigest(), user['id'], csrf, time.time() + 43200))
                     db.commit()
-                    self.reply(200, {'user': public_user(user), 'csrf': csrf}, self.cookie(token, 43200))
+                    self.reply(200, {'user': public_user(user, getattr(self.server, 'admin_suspended', False)), 'csrf': csrf}, self.cookie(token, 43200))
                     return
                 user = self.session(db)
                 if not user:
@@ -372,6 +377,9 @@ def main():
     parser.add_argument('--temporary-password', action='store_true', help='Allow a 4-character temporary password in temporary editing mode')
     args = parser.parse_args()
     settings = json.loads(Path(__file__).with_name('settings.json').read_text())
+    suspended = settings.get('admin_suspended') is True
+    if suspended and (args.reserve_admin or args.set_admin or args.admin or args.require_login):
+        parser.error('관리 기능이 일시 중지되어 있습니다. 관리 체계를 재개한 후 사용할 수 있습니다.')
     if args.temporary_password and (settings.get('temporary_open') is not True or args.require_login):
         parser.error('임시 비밀번호는 임시 편집 모드에서만 등록할 수 있습니다.')
     initialize(args.db)
@@ -400,7 +408,8 @@ def main():
         return
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     server.db_path, server.secure_cookies = args.db, args.secure_cookies
-    server.temporary_open = settings.get('temporary_open') is True and not args.require_login
+    server.admin_suspended = suspended
+    server.temporary_open = suspended or (settings.get('temporary_open') is True and not args.require_login)
     server.open_csrf = secrets.token_urlsafe(32)
     print(f'Department server listening on port {args.port}', flush=True)
     server.serve_forever()
