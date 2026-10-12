@@ -8,6 +8,7 @@ import hashlib
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 from pathlib import Path
 import secrets
 import sqlite3
@@ -21,7 +22,7 @@ FIELDS = {
     '청소년부': ['설교자', '인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '교사1', '교사2', '교사3', '교사4', '교사5', '교사6'],
     '청년부': ['인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '싱어5', '싱어6'],
 }
-BOARD_KINDS = ('공지사항', '물품구매요청', '개선안요청', '애로사항')
+BOARD_KINDS = ('공지사항', '물품구매요청', '개선안요청')
 
 
 def connect(path):
@@ -65,11 +66,13 @@ def initialize(path):
           id TEXT PRIMARY KEY, department TEXT NOT NULL, title TEXT NOT NULL,
           content TEXT NOT NULL, attachment_name TEXT, attachment_data BLOB,
           updated_at REAL NOT NULL, version INTEGER NOT NULL DEFAULT 0,
-          kind TEXT NOT NULL DEFAULT '공지사항');
+          kind TEXT NOT NULL DEFAULT '공지사항', purchase_data TEXT);
         CREATE INDEX IF NOT EXISTS notices_by_department ON notices(department);
         ''')
         if 'kind' not in {row['name'] for row in db.execute('PRAGMA table_info(notices)')}:
             db.execute("ALTER TABLE notices ADD COLUMN kind TEXT NOT NULL DEFAULT '공지사항'")
+        if 'purchase_data' not in {row['name'] for row in db.execute('PRAGMA table_info(notices)')}:
+            db.execute('ALTER TABLE notices ADD COLUMN purchase_data TEXT')
         db.execute('BEGIN IMMEDIATE')
         if not db.execute("SELECT 1 FROM migrations WHERE name='multiple-events-v1'").fetchone():
             for row in db.execute('SELECT DISTINCT department, day FROM entries').fetchall():
@@ -121,11 +124,12 @@ def event_payload(db, event):
     return {'event': dict(event), 'entries': [public_entry(db, event['id'], field) for field in FIELDS[event['department']]]}
 
 
-NOTICE_SELECT = 'SELECT id,department,kind,title,content,attachment_name,length(attachment_data) AS attachment_size,updated_at,version FROM notices'
+NOTICE_SELECT = 'SELECT id,department,kind,title,content,purchase_data,attachment_name,length(attachment_data) AS attachment_size,updated_at,version FROM notices'
 
 
 def notice_payload(row):
     return {**{key: row[key] for key in ('id', 'department', 'kind', 'title', 'content', 'updated_at', 'version')},
+            'purchase': json.loads(row['purchase_data']) if row['purchase_data'] else None,
             'attachment': {'name': row['attachment_name'], 'size': row['attachment_size']} if row['attachment_name'] else None}
 
 
@@ -220,6 +224,33 @@ class Handler(BaseHTTPRequestHandler):
         if kind not in BOARD_KINDS:
             raise ApiError(400, '게시판 항목을 확인하세요.')
         return kind
+
+    def purchase_fields(self, body):
+        purchase = body.get('purchase')
+        if not isinstance(purchase, dict):
+            raise ApiError(400, '구매 요청 항목을 입력하세요.')
+        item, reason = purchase.get('item'), purchase.get('reason')
+        if not isinstance(item, str) or not item.strip() or len(item) > 100:
+            raise ApiError(400, '구매 물품은 1~100자로 입력하세요.')
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 20000:
+            raise ApiError(400, '구매 사유는 1~20000자로 입력하세요.')
+        quantity, amount, link = purchase.get('quantity'), purchase.get('amount'), purchase.get('link', '')
+        if type(quantity) is not int or not 1 <= quantity <= 1000000:
+            raise ApiError(400, '구매 수량은 1~1000000 사이의 정수로 입력하세요.')
+        if amount is not None and (type(amount) not in (int, float) or not 0 <= amount <= 1000000000000 or not math.isfinite(amount)):
+            raise ApiError(400, '물품 금액은 0 이상인 숫자로 입력하세요.')
+        if not isinstance(link, str) or len(link) > 2048 or any(ord(char) < 32 for char in link):
+            raise ApiError(400, '구매 링크를 확인하세요.')
+        link = link.strip()
+        if link:
+            try:
+                parsed = urlsplit(link)
+                valid = parsed.scheme in ('http', 'https') and bool(parsed.hostname)
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ApiError(400, '구매 링크는 http 또는 https 주소로 입력하세요.')
+        return {'item': item.strip(), 'reason': reason.strip(), 'quantity': quantity, 'amount': amount, 'link': link}
 
     def do_GET(self):
         path = urlsplit(self.path)
@@ -377,11 +408,12 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/notice':
                     department = self.notice_department(body)
                     kind = self.notice_kind(body)
-                    title = body.get('title')
+                    purchase = self.purchase_fields(body) if kind == '물품구매요청' else None
+                    title = purchase['item'] if purchase else body.get('title')
                     if not isinstance(title, str) or not title.strip() or len(title) > 100:
                         raise ApiError(400, '제목은 1~100자로 입력하세요.')
                     title = title.strip()
-                    content = body.get('content')
+                    content = purchase['reason'] if purchase else body.get('content')
                     if not isinstance(content, str) or not content.strip() or len(content) > 20000:
                         raise ApiError(400, '공지 내용은 1~20000자로 입력하세요.')
                     action = body.get('action')
@@ -418,10 +450,12 @@ class Handler(BaseHTTPRequestHandler):
                             raise ApiError(400, '첨부파일을 읽지 못했습니다.')
                         if len(filedata) > 5 * 1024 * 1024:
                             raise ApiError(400, '첨부파일은 5메가바이트 이하로 등록하세요.')
-                    db.execute('''INSERT INTO notices VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                    db.execute('''INSERT INTO notices(id,department,title,content,attachment_name,attachment_data,updated_at,version,kind,purchase_data)
+                      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
                       title=excluded.title,content=excluded.content,attachment_name=excluded.attachment_name,
-                      attachment_data=excluded.attachment_data,updated_at=excluded.updated_at,version=excluded.version''',
-                               (notice_id, department, title, content, filename, filedata, time.time(), version, kind))
+                      attachment_data=excluded.attachment_data,updated_at=excluded.updated_at,version=excluded.version,purchase_data=excluded.purchase_data''',
+                               (notice_id, department, title, content, filename, filedata, time.time(), version, kind,
+                                json.dumps(purchase, ensure_ascii=False) if purchase else None))
                     result = notice_payload(db.execute(NOTICE_SELECT + ' WHERE id=?', (notice_id,)).fetchone())
                     db.commit()
                     self.reply(200, {'notice': result})

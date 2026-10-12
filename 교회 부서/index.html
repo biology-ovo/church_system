@@ -89,6 +89,10 @@
     .notice-editor textarea { resize: vertical; min-height: 180px; }
     .notice-editor .remove-attachment { display: flex; }
     .notice-editor button { width: auto; margin: 0 8px 0 0; }
+    .purchase-details { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
+    .purchase-details dt { font-weight: 600; }
+    .purchase-details dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .notice-table.purchase-table { min-width: 700px; }
     .suggestion-categories { display: flex; flex-wrap: wrap; gap: 12px; }
     .suggestion-categories button { margin: 0; }
     @media (max-width: 600px) { .notice-panel { padding: 16px; } .notice-editor { padding: 14px; } }
@@ -157,7 +161,7 @@
     </section>
     <section class="notice-panel" id="suggestionPanel" aria-labelledby="suggestionTitle" hidden>
       <h2 id="suggestionTitle" tabindex="-1">건의사항</h2>
-      <div class="suggestion-categories"><button type="button" data-board-kind="물품구매요청">물품구매요청</button><button type="button" data-board-kind="개선안요청">개선안요청</button><button type="button" data-board-kind="애로사항">애로사항</button></div>
+      <div class="suggestion-categories"><button type="button" data-board-kind="물품구매요청">물품구매요청</button><button type="button" data-board-kind="개선안요청">개선안요청</button></div>
     </section>
     <section class="notice-panel" id="noticePanel" aria-labelledby="noticeTitle" hidden>
       <h2 id="noticeTitle" tabindex="-1">공지사항</h2>
@@ -167,16 +171,26 @@
       <article id="noticeDetail" class="notice-detail" hidden>
         <h3 id="noticeDetailTitle" tabindex="-1"></h3>
         <p id="noticeBody"></p>
+        <dl id="purchaseDetail" class="purchase-details" hidden></dl>
         <p id="noticeAttachment"></p>
         <button type="button" id="editNotice">수정</button>
       </article>
       <form id="noticeForm" class="notice-editor" novalidate hidden>
+        <div id="standardNoticeFields">
         <label>제목<input id="noticeSubject" maxlength="100" required></label>
         <label>내용<textarea id="noticeContent" maxlength="20000" rows="8" required></textarea></label>
         <label>첨부파일<input id="noticeFile" type="file"></label>
         <p id="currentAttachment"></p>
         <label id="removeAttachmentLabel" class="remove-attachment" hidden><input id="removeAttachment" type="checkbox">기존 첨부파일 삭제</label>
         <p class="auth-help">첨부파일은 한 개, 5메가바이트 이하로 등록할 수 있습니다.</p>
+        </div>
+        <div id="purchaseFields" hidden>
+          <label>구매 물품<input id="purchaseItem" maxlength="100" required></label>
+          <label>구매 사유<textarea id="purchaseReason" maxlength="20000" rows="5" required></textarea></label>
+          <label>구매 수량<input id="purchaseQuantity" type="number" min="1" max="1000000" step="1" value="1" required></label>
+          <label>물품 금액<input id="purchaseAmount" type="number" min="0" max="1000000000000" step="any" placeholder="원 단위"></label>
+          <label>구매 링크<input id="purchaseLink" type="url" maxlength="2048" placeholder="https://"></label>
+        </div>
         <button type="submit">공지 저장</button><button type="button" id="cancelNotice">취소</button>
       </form>
     </section>
@@ -269,12 +283,15 @@
       const params = body || Object.fromEntries(new URL(path, 'http://local.invalid').searchParams);
       if (!departmentFields[params.department]) throw new Error('부서를 확인하세요.');
       const kind = params.kind || '공지사항';
+      if (!['공지사항', '물품구매요청', '개선안요청'].includes(kind)) throw new Error('게시판 항목을 확인하세요.');
       const notice = notices.find(item => item.id === params.notice_id && item.department === params.department && (item.kind || '공지사항') === kind);
       if (!body) {
         if (path.startsWith('/api/notices?')) return { notices: notices.filter(item => item.department === params.department && (item.kind || '공지사항') === kind).sort((a, b) => b.updated_at - a.updated_at) };
         if (!notice) throw new Error('공지사항을 찾을 수 없습니다.');
         return { notice };
       }
+      const purchase = kind === '물품구매요청' ? validatePurchase(body.purchase) : null;
+      if (purchase) { body.title = purchase.item; body.content = purchase.reason; }
       if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 100) throw new Error('공지 제목은 1~100자로 입력하세요.');
       if (typeof body.content !== 'string' || !body.content.trim() || body.content.length > 20000) throw new Error('공지 내용은 1~20000자로 입력하세요.');
       const updated = body.action === 'create' ? {
@@ -285,6 +302,7 @@
       if (body.action !== 'create' && updated.version !== body.version) throw new Error('공지사항이 변경되었습니다. 최신 내용을 불러오세요.');
       updated.title = body.title.trim();
       updated.content = body.content;
+      updated.purchase = purchase;
       updated.updated_at = Date.now() / 1000;
       if (body.action !== 'create') updated.version++;
       if (body.remove_attachment) updated.attachment = null;
@@ -294,6 +312,44 @@
       try { localStorage.setItem(key, JSON.stringify(notices)); }
       catch { throw new Error('공지를 저장하지 못했습니다. 브라우저 저장 공간이 부족하면 첨부파일을 줄여 주세요.'); }
       return { notice: updated };
+    }
+    function validatePurchase(purchase) {
+      if (!purchase || typeof purchase.item !== 'string' || !purchase.item.trim() || purchase.item.length > 100) throw new Error('구매 물품은 1~100자로 입력하세요.');
+      if (typeof purchase.reason !== 'string' || !purchase.reason.trim() || purchase.reason.length > 20000) throw new Error('구매 사유는 1~20000자로 입력하세요.');
+      if (!Number.isInteger(purchase.quantity) || purchase.quantity < 1 || purchase.quantity > 1000000) throw new Error('구매 수량은 1~1000000 사이의 정수로 입력하세요.');
+      if (purchase.amount !== null && (!Number.isFinite(purchase.amount) || purchase.amount < 0 || purchase.amount > 1000000000000)) throw new Error('물품 금액은 0 이상인 숫자로 입력하세요.');
+      let link = purchase.link.trim();
+      if (link) {
+        try {
+          const url = new URL(link);
+          if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || link.length > 2048) throw new Error();
+        } catch { throw new Error('구매 링크는 http 또는 https 주소로 입력하세요.'); }
+      }
+      return { ...purchase, item: purchase.item.trim(), reason: purchase.reason.trim(), link };
+    }
+    function purchaseData(notice) {
+      return notice.purchase || { item: notice.title, reason: notice.content, quantity: null, amount: null, link: '' };
+    }
+    function fillPurchaseValue(element, field, purchase) {
+      if (field === 'link') {
+        if (purchase.link) {
+          try {
+            const url = new URL(purchase.link);
+            if (['http:', 'https:'].includes(url.protocol) && url.hostname) {
+              const link = document.createElement('a');
+              link.href = url.href;
+              link.target = '_blank';
+              link.rel = 'noopener noreferrer';
+              link.textContent = '구매 링크 열기';
+              element.append(link);
+              return;
+            }
+          } catch { /* 잘못된 링크는 실행하지 않습니다. */ }
+        }
+        element.textContent = '-';
+      } else if (field === 'amount') element.textContent = purchase.amount == null ? '-' : Number(purchase.amount).toLocaleString('ko-KR') + '원';
+      else if (field === 'quantity') element.textContent = purchase.quantity == null ? '-' : purchase.quantity + '개';
+      else element.textContent = purchase[field];
     }
     async function api(path, body) {
       if (localMode) return localApi(path, body);
@@ -674,7 +730,8 @@
       document.querySelector('#noticePanel').hidden = false;
       document.querySelector('#noticeTitle').textContent = `${department} ${kind}`;
       document.querySelector('#newNotice').textContent = kind === '공지사항' ? '공지 작성' : '건의 작성';
-      document.querySelector('#noticeForm button[type="submit"]').textContent = kind === '공지사항' ? '공지 저장' : '건의 저장';
+      if (kind === '물품구매요청') document.querySelector('#newNotice').textContent = '구매 요청 작성';
+      document.querySelector('#noticeForm button[type="submit"]').textContent = kind === '공지사항' ? '공지 저장' : kind === '물품구매요청' ? '구매 요청 저장' : '건의 저장';
       await renderBoard();
       document.querySelector('#noticeTitle').focus();
     }
@@ -709,9 +766,10 @@
         else {
           const table = document.createElement('table');
           table.className = 'notice-table';
+          if (board.kind === '물품구매요청') table.classList.add('purchase-table');
           const head = document.createElement('thead');
           const headings = document.createElement('tr');
-          ['제목', '내용', '첨부파일'].forEach(text => {
+          (board.kind === '물품구매요청' ? ['구매 물품', '구매 사유', '구매 수량', '물품 금액', '구매 링크'] : ['제목', '내용', '첨부파일']).forEach(text => {
             const cell = document.createElement('th');
             cell.scope = 'col';
             cell.textContent = text;
@@ -729,9 +787,19 @@
             titleCell.append(button);
             const contentCell = document.createElement('td');
             contentCell.textContent = notice.content.length > 70 ? notice.content.slice(0, 70) + '…' : notice.content;
-            const attachmentCell = document.createElement('td');
-            attachmentCell.textContent = notice.attachment ? notice.attachment.name : '없음';
-            row.append(titleCell, contentCell, attachmentCell);
+            row.append(titleCell, contentCell);
+            if (board.kind === '물품구매요청') {
+              const purchase = purchaseData(notice);
+              ['quantity', 'amount', 'link'].forEach(field => {
+                const cell = document.createElement('td');
+                fillPurchaseValue(cell, field, purchase);
+                row.append(cell);
+              });
+            } else {
+              const attachmentCell = document.createElement('td');
+              attachmentCell.textContent = notice.attachment ? notice.attachment.name : '없음';
+              row.append(attachmentCell);
+            }
             body.append(row);
           });
           table.append(head, body);
@@ -743,7 +811,22 @@
           activeNotice = detail.notice;
           document.querySelector('#noticeDetailTitle').textContent = activeNotice.title;
           document.querySelector('#noticeBody').textContent = activeNotice.content;
+          document.querySelector('#noticeBody').hidden = board.kind === '물품구매요청';
+          const purchaseDetail = document.querySelector('#purchaseDetail');
+          purchaseDetail.hidden = board.kind !== '물품구매요청';
+          purchaseDetail.replaceChildren();
+          if (board.kind === '물품구매요청') {
+            const purchase = purchaseData(activeNotice);
+            [['구매 물품', 'item'], ['구매 사유', 'reason'], ['구매 수량', 'quantity'], ['물품 금액', 'amount'], ['구매 링크', 'link']].forEach(([label, field]) => {
+              const term = document.createElement('dt');
+              term.textContent = label;
+              const value = document.createElement('dd');
+              fillPurchaseValue(value, field, purchase);
+              purchaseDetail.append(term, value);
+            });
+          }
           const attachment = document.querySelector('#noticeAttachment');
+          attachment.hidden = board.kind === '물품구매요청' && !activeNotice.attachment;
           attachment.replaceChildren();
           if (activeNotice.attachment) {
             const link = document.createElement('a');
@@ -766,6 +849,15 @@
     function showNoticeEditor(edit = false) {
       if (!edit) activeNotice = null;
       const notice = edit ? activeNotice : null;
+      const purchaseMode = activeBoard.kind === '물품구매요청';
+      document.querySelector('#standardNoticeFields').hidden = purchaseMode;
+      document.querySelector('#purchaseFields').hidden = !purchaseMode;
+      const purchase = notice ? purchaseData(notice) : { item: '', reason: '', quantity: 1, amount: null, link: '' };
+      document.querySelector('#purchaseItem').value = purchase.item;
+      document.querySelector('#purchaseReason').value = purchase.reason;
+      document.querySelector('#purchaseQuantity').value = purchase.quantity ?? 1;
+      document.querySelector('#purchaseAmount').value = purchase.amount ?? '';
+      document.querySelector('#purchaseLink').value = purchase.link;
       document.querySelector('#noticeSubject').value = notice ? notice.title : '';
       document.querySelector('#noticeContent').value = notice ? notice.content : '';
       document.querySelector('#noticeFile').value = '';
@@ -774,7 +866,7 @@
       document.querySelector('#removeAttachmentLabel').hidden = !notice?.attachment;
       document.querySelector('#noticeForm').hidden = false;
       document.querySelector('#noticeDetail').hidden = true;
-      document.querySelector('#noticeSubject').focus();
+      document.querySelector(purchaseMode ? '#purchaseItem' : '#noticeSubject').focus();
     }
     scheduleLinks.forEach(link => {
       const department = link.dataset.department;
@@ -786,7 +878,8 @@
         button.setAttribute('aria-label', `${department} ${menu}`);
         button.setAttribute('aria-controls', menu === '공지사항' ? 'noticePanel' : 'suggestionPanel');
         button.addEventListener('click', () => menu === '공지사항' ? openBoard(department) : openSuggestions(department));
-        link.parentElement.append(button);
+        if (menu === '공지사항') link.parentElement.insertBefore(button, link);
+        else link.parentElement.append(button);
       }
     });
     document.querySelectorAll('[data-board-kind]').forEach(button => button.addEventListener('click', () => openBoard(activeDepartment, button.dataset.boardKind)));
@@ -809,6 +902,14 @@
         remove_attachment: document.querySelector('#removeAttachment').checked }, board);
       button.disabled = true;
       try {
+        if (board.kind === '물품구매요청') {
+          payload.purchase = validatePurchase({ item: document.querySelector('#purchaseItem').value,
+            reason: document.querySelector('#purchaseReason').value, quantity: Number(document.querySelector('#purchaseQuantity').value),
+            amount: document.querySelector('#purchaseAmount').value === '' ? null : Number(document.querySelector('#purchaseAmount').value),
+            link: document.querySelector('#purchaseLink').value });
+          payload.title = payload.purchase.item;
+          payload.content = payload.purchase.reason;
+        }
         if (file) {
           if (file.size > 5 * 1024 * 1024) throw new Error('첨부파일은 5메가바이트 이하로 등록하세요.');
           const encoded = await new Promise((resolve, reject) => {

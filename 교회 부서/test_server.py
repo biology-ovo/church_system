@@ -331,12 +331,14 @@ class LockTests(unittest.TestCase):
         self.assertTrue(current['temporary_open'])
 
     def notice(self, **extra):
+        if extra.get('kind') == '물품구매요청' and 'purchase' not in extra:
+            extra['purchase'] = {'item': '요청 물품', 'reason': '구매 사유', 'quantity': 1, 'amount': None, 'link': ''}
         return self.clients['owner'].call('/api/notice', {'action': 'create', 'department': '예배부',
             'title': '새 공지', 'content': '공지 내용', **extra})
 
     def test_board_posts_are_separate_by_department_and_kind(self):
         self.assertEqual(self.notice()[0], 200)
-        for kind in ('물품구매요청', '개선안요청', '애로사항'):
+        for kind in ('물품구매요청', '개선안요청'):
             self.assertEqual(self.notice(kind=kind, title=kind)[0], 200)
         for kind in server.BOARD_KINDS:
             status, result = self.clients['owner'].call('/api/notices?department=예배부&kind='+kind)
@@ -369,7 +371,7 @@ class LockTests(unittest.TestCase):
             self.assertEqual(response.headers['Content-Type'], 'application/octet-stream')
             self.assertTrue(response.headers['Content-Disposition'].startswith('attachment;'))
             self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
-        self.assertEqual(self.clients['owner'].call(path+'&kind=애로사항')[0], 404)
+        self.assertEqual(self.clients['owner'].call(path+'&kind=개선안요청')[0], 404)
         self.assertEqual(self.guest.call(path)[0], 401)
 
     def test_notice_validation_and_anonymous_creation_when_enabled(self):
@@ -382,9 +384,31 @@ class LockTests(unittest.TestCase):
         self.http.open_csrf = secrets.token_urlsafe(32)
         self.guest.csrf = self.guest.call('/api/session')[1]['csrf']
         status, result = self.guest.call('/api/notice', {'action': 'create', 'department': '청년부',
-            'kind': '물품구매요청', 'title': '구매 요청', 'content': '장비 필요'})
+            'kind': '물품구매요청', 'purchase': {'item': '장비', 'reason': '장비 필요', 'quantity': 1, 'amount': 10000, 'link': 'https://example.com/item'}})
         self.assertEqual(status, 200)
         self.assertEqual(result['notice']['kind'], '물품구매요청')
+
+    def test_purchase_fields_persist_and_edit(self):
+        purchase = {'item': '무선 마이크', 'reason': '기존 장비 고장', 'quantity': 2, 'amount': 125000, 'link': 'https://example.com/item'}
+        status, result = self.notice(kind='물품구매요청', purchase=purchase)
+        self.assertEqual(status, 200)
+        self.assertEqual(result['notice']['purchase'], purchase)
+        self.assertEqual(result['notice']['title'], purchase['item'])
+        updated = {**purchase, 'quantity': 3, 'amount': 0, 'link': ''}
+        status, result = self.notice(kind='물품구매요청', purchase=updated, action='update', notice_id=result['notice']['id'], version=0)
+        self.assertEqual(status, 200)
+        self.assertEqual(result['notice']['purchase'], updated)
+        with server.connect(self.path) as db:
+            row = db.execute(server.NOTICE_SELECT+' WHERE id=?', (result['notice']['id'],)).fetchone()
+            self.assertEqual(server.notice_payload(row)['purchase'], updated)
+
+    def test_purchase_validation_and_removed_board(self):
+        base = {'item': '물품', 'reason': '필요', 'quantity': 1, 'amount': None, 'link': ''}
+        for changes in ({'item': ''}, {'reason': ''}, {'quantity': 0}, {'quantity': 1.5}, {'quantity': True},
+                        {'amount': -1}, {'amount': float('inf')}, {'link': 'javascript:alert(1)'}, {'link': '잘못된 주소'}):
+            self.assertEqual(self.notice(kind='물품구매요청', purchase={**base, **changes})[0], 400)
+        self.assertEqual(self.notice(kind='애로사항')[0], 400)
+        self.assertEqual(self.clients['owner'].call('/api/notices?department=예배부&kind=애로사항')[0], 400)
 
 
 if __name__ == '__main__':
