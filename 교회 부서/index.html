@@ -76,12 +76,13 @@
     @media (max-width: 600px) { .field-row { grid-template-columns: 1fr auto auto; } .schedule-field { grid-template-columns: 64px minmax(0, 1fr); gap: 8px; } .field-row button { padding: 10px 8px; } }
   </style>
 </head>
-<body>
+<body data-login-disabled="true">
   <main>
     <p class="eyebrow">교회 부서 안내</p>
     <h1>교회 부서 관리</h1>
     <p class="intro">관리할 부서를 선택하세요.</p>
-    <section class="auth-panel" aria-label="로그인">
+    <p id="usageNotice" class="intro" role="status">로그인 없이 부서를 선택하고 일정을 추가할 수 있습니다.</p>
+    <section class="auth-panel" aria-label="로그인" hidden>
       <p id="accountStatus" role="status">로그인 상태 확인 중…</p>
       <form id="loginForm" role="tabpanel" aria-labelledby="loginTab" novalidate>
         <label>아이디<input id="username" autocomplete="username" required maxlength="60"></label>
@@ -148,13 +149,68 @@
       '청년부': ['인도자', '메인', '드럼', '베이스', '세컨', '일렉', '싱어1', '싱어2', '싱어3', '싱어4', '싱어5', '싱어6']
     };
     let currentUser = null;
+    let loginDisabled = document.body.dataset.loginDisabled === 'true';
     let temporaryOpen = false;
     let adminSuspended = false;
     let csrfToken = null;
     let renderId = 0;
     let activeEventId = null;
     let authTab = 'login';
+    let localMode = false;
+    const LOCAL_KEY = 'church-department-events-v1';
+    function localApi(path, body) {
+      if (path === '/api/session') return { user: { id: null, username: '임시 편집', admin: false }, csrf: null, temporary_open: true, admin_suspended: true, login_disabled: true };
+      let events;
+      try {
+        events = JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]');
+        if (!Array.isArray(events)) throw new Error();
+      } catch { throw new Error('저장된 일정을 불러오지 못했습니다. 브라우저 저장 공간을 확인하세요.'); }
+      const url = new URL(path, 'http://local.invalid');
+      const params = body || Object.fromEntries(url.searchParams);
+      const event = events.find(item => item.id === params.event_id && item.department === params.department && item.day === params.day);
+      function payload(event) {
+        return { event: { id: event.id, department: event.department, day: event.day, title: event.title, version: event.version },
+          entries: departmentFields[event.department].map(field => ({ field, value: event.values[field] || '', owner_id: null, owner: null, locked_by: null, locker: null, version: event.versions[field] || 0 })) };
+      }
+      function persist() {
+        try { localStorage.setItem(LOCAL_KEY, JSON.stringify(events)); }
+        catch { throw new Error('일정을 저장하지 못했습니다. 브라우저 저장 공간을 확인하세요.'); }
+      }
+      if (!body && url.pathname === '/api/schedule') return { events: events.filter(item => item.department === params.department && item.day === params.day).map(item => payload(item).event) };
+      if (!body && url.pathname === '/api/event') {
+        if (!event) throw new Error('일정을 찾을 수 없습니다. 최신 내용을 불러오세요.');
+        return payload(event);
+      }
+      if (body && url.pathname === '/api/event') {
+        if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 100) throw new Error('일정 제목은 1~100자로 입력하세요.');
+        if (body.action === 'create') {
+          if (!departmentFields[body.department]) throw new Error('부서를 확인하세요.');
+          const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+          const created = { id, department: body.department, day: body.day, title: body.title.trim(), version: 0, values: {}, versions: {} };
+          events.push(created);
+          persist();
+          return payload(created);
+        }
+        if (!event) throw new Error('일정을 찾을 수 없습니다. 최신 내용을 불러오세요.');
+        if (event.version !== body.version) throw new Error('일정 제목이 변경되었습니다. 최신 내용을 불러오세요.');
+        event.title = body.title.trim();
+        event.version++;
+        persist();
+        return payload(event);
+      }
+      if (body && url.pathname === '/api/field' && body.action === 'save') {
+        if (!event || !departmentFields[event.department].includes(body.field)) throw new Error('일정과 항목을 확인하세요.');
+        if ((event.versions[body.field] || 0) !== body.version) throw new Error('입력 내용이 변경되었습니다. 최신 내용을 불러오세요.');
+        if (typeof body.value !== 'string' || body.value.length > 500) throw new Error('입력은 500자 이내여야 합니다.');
+        event.values[body.field] = body.value;
+        event.versions[body.field] = body.version + 1;
+        persist();
+        return { entry: payload(event).entries.find(item => item.field === body.field) };
+      }
+      throw new Error('현재는 로그인 없이 일정 기능만 사용할 수 있습니다.');
+    }
     async function api(path, body) {
+      if (localMode) return localApi(path, body);
       let response;
       try { response = await fetch(path, {
         method: body ? 'POST' : 'GET',
@@ -168,6 +224,11 @@
       return result;
     }
     function showAccount() {
+      document.querySelector('.auth-panel').hidden = loginDisabled;
+      document.querySelector('#usageNotice').hidden = !loginDisabled;
+      document.querySelector('#usageNotice').textContent = localMode
+        ? '로그인 없이 사용할 수 있습니다. 일정은 현재 브라우저에 저장됩니다.'
+        : '로그인 없이 모든 부서의 일정을 추가하고 수정할 수 있습니다.';
       const signedIn = currentUser && currentUser.id !== null;
       document.querySelector('#accountStatus').textContent = signedIn
         ? `${currentUser.username} · ${adminSuspended ? '회원' : currentUser.admin ? '관리자' : '일반 사용자'}`
@@ -241,16 +302,36 @@
         renderDateItems();
       } catch (error) { document.querySelector('#authMessage').textContent = error.message; }
     });
-    api('/api/session').then(result => {
+    async function initializeSession() {
+      let result;
+      if (loginDisabled && location.protocol === 'file:') {
+        localMode = true;
+        result = localApi('/api/session');
+      } else {
+        let response;
+        try { response = await fetch('/api/session'); }
+        catch { throw new Error('일정 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'); }
+        // Static file hosts have no account API. Temporary standalone use is local only.
+        if (loginDisabled && [404, 405, 501].includes(response.status)) {
+          localMode = true;
+          result = localApi('/api/session');
+        } else {
+          if (!response.ok) throw new Error('일정 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.');
+          result = await response.json();
+        }
+      }
+      loginDisabled = result.login_disabled === true;
       temporaryOpen = result.temporary_open === true;
       adminSuspended = result.admin_suspended === true;
       currentUser = result.user;
       csrfToken = result.csrf;
       showAccount();
       renderDateItems();
-    }).catch(() => {
+    }
+    Promise.resolve().then(initializeSession).catch(() => {
       showAccount();
-      document.querySelector('#authMessage').textContent = '로그인 서버에 연결하지 못했습니다. 전용 앱 서버로 실행해 주세요.';
+      document.querySelector('#usageNotice').hidden = false;
+      document.querySelector('#usageNotice').textContent = '일정 서버에 연결하지 못했습니다. 서버 실행 상태를 확인한 뒤 새로고침하세요.';
     });
     const todayParts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -359,7 +440,7 @@
         const saveStatus = document.createElement('p');
         saveStatus.className = 'save-status';
         saveStatus.setAttribute('role', 'status');
-        saveStatus.textContent = temporaryOpen ? '입력 후 저장을 누르세요. 지금은 잠금 없이 편집할 수 있습니다.' : '입력 후 저장을 누르세요. 최초 입력자만 잠글 수 있고, 관리자 또는 잠금을 건 사람만 해제할 수 있습니다.';
+        saveStatus.textContent = localMode ? '입력 후 저장을 누르세요. 이 브라우저에 저장되며 다른 기기와 공유되지 않습니다.' : temporaryOpen ? '입력 후 저장을 누르세요. 지금은 잠금 없이 편집할 수 있습니다.' : '입력 후 저장을 누르세요. 최초 입력자만 잠글 수 있고, 관리자 또는 잠금을 건 사람만 해제할 수 있습니다.';
         result.entries.forEach(entry => {
           const field = entry.field;
           const item = document.createElement('div');

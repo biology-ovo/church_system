@@ -1,4 +1,5 @@
 {
   "temporary_open": true,
-  "admin_suspended": true
+  "admin_suspended": true,
+  "login_enabled": false
 }

@@ -279,6 +279,30 @@ class LockTests(unittest.TestCase):
         self.assertTrue(self.clients['admin'].call('/api/session')[1]['user']['admin'])
         self.assertEqual(self.field('admin', 'unlock', 2)[0], 200)
 
+    def test_login_disabled_keeps_all_schedule_functions_available_anonymously(self):
+        self.http.login_disabled = self.http.temporary_open = self.http.admin_suspended = True
+        self.http.open_csrf = secrets.token_urlsafe(32)
+        _, session = self.clients['admin'].call('/api/session')
+        self.assertTrue(session['login_disabled'])
+        self.assertIsNone(session['user']['id'])
+        self.guest.csrf = session['csrf']
+        for endpoint in ('/api/login', '/api/register', '/api/logout'):
+            self.assertEqual(self.guest.call(endpoint, {})[0], 409)
+        for department, fields in server.FIELDS.items():
+            status, result = self.guest.call('/api/event', {'action': 'create', 'department': department,
+                                                           'day': '2026-10-12', 'title': '로그인 없는 일정'})
+            self.assertEqual(status, 200)
+            self.assertEqual([row['field'] for row in result['entries']], fields)
+            event = result['event']
+            status, result = self.guest.call('/api/event', {'action': 'rename', 'department': department,
+                'day': event['day'], 'event_id': event['id'], 'version': 0, 'title': '제목 수정'})
+            self.assertEqual(status, 200)
+            self.assertEqual(result['event']['title'], '제목 수정')
+            status, result = self.guest.call('/api/field', {'action': 'save', 'department': department,
+                'day': event['day'], 'event_id': event['id'], 'version': 0, 'field': fields[0], 'value': '담당자'})
+            self.assertEqual(status, 200)
+            self.assertEqual(result['entry']['value'], '담당자')
+
     def test_signup_validation_confirmation_and_origin(self):
         password = secrets.token_urlsafe(24)
         body = {'username': 'new-member', 'password': password, 'password_confirm': password}

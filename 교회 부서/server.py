@@ -135,6 +135,8 @@ class Handler(BaseHTTPRequestHandler):
         guest = ({'id': None, 'username': '임시 편집', 'admin': False,
                   'csrf': self.server.open_csrf, 'token_hash': ''}
                  if getattr(self.server, 'temporary_open', False) else None)
+        if getattr(self.server, 'login_disabled', False):
+            return guest
         cookies = SimpleCookie()
         try:
             cookies.load(self.headers.get('Cookie', ''))
@@ -181,6 +183,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path)
         if path.path in ('/', '/department-app/', '/department-app/index.html', '/index.html'):
             body = Path(__file__).with_name('index.html').read_bytes()
+            body = body.replace(b'data-login-disabled="true"',
+                                b'data-login-disabled="true"' if getattr(self.server, 'login_disabled', False)
+                                else b'data-login-disabled="false"')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
@@ -197,7 +202,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.reply(200, {'user': public_user(user) if user else None,
                                      'csrf': user['csrf'] if user else None,
                                      'temporary_open': getattr(self.server, 'temporary_open', False),
-                                     'admin_suspended': getattr(self.server, 'admin_suspended', False)})
+                                     'admin_suspended': getattr(self.server, 'admin_suspended', False),
+                                     'login_disabled': getattr(self.server, 'login_disabled', False)})
                     return
                 if not user:
                     raise ApiError(401, '로그인이 필요합니다.')
@@ -236,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             with connect(self.server.db_path) as db:
                 db.execute('BEGIN IMMEDIATE')
                 temporary_open = getattr(self.server, 'temporary_open', False)
+                if getattr(self.server, 'login_disabled', False) and self.path in ('/api/register', '/api/login', '/api/logout'):
+                    raise ApiError(409, '로그인과 회원가입은 현재 일시 중지되어 있습니다. 로그인 없이 이용하세요.')
                 if self.path == '/api/register':
                     username, password = body.get('username'), body.get('password')
                     minimum = 4 if temporary_open else 12
@@ -378,6 +386,9 @@ def main():
     args = parser.parse_args()
     settings = json.loads(Path(__file__).with_name('settings.json').read_text())
     suspended = settings.get('admin_suspended') is True
+    login_disabled = settings.get('login_enabled') is False
+    if login_disabled and args.require_login:
+        parser.error('로그인이 일시 중지되어 있습니다. 설정을 변경한 후 사용할 수 있습니다.')
     if suspended and (args.reserve_admin or args.set_admin or args.admin or args.require_login):
         parser.error('관리 기능이 일시 중지되어 있습니다. 관리 체계를 재개한 후 사용할 수 있습니다.')
     if args.temporary_password and (settings.get('temporary_open') is not True or args.require_login):
@@ -409,7 +420,8 @@ def main():
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     server.db_path, server.secure_cookies = args.db, args.secure_cookies
     server.admin_suspended = suspended
-    server.temporary_open = suspended or (settings.get('temporary_open') is True and not args.require_login)
+    server.login_disabled = login_disabled
+    server.temporary_open = suspended or login_disabled or (settings.get('temporary_open') is True and not args.require_login)
     server.open_csrf = secrets.token_urlsafe(32)
     print(f'Department server listening on port {args.port}', flush=True)
     server.serve_forever()
